@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Echo / Counter</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">EFML · 示例模块</p>
+    <h1>Echo / Counter</h1>
+    <p>模块页面是你自己的 HTML / CSS / JS，EFML 把它连到对应的游戏内模块。</p>
+    <span id="connection">正在检查连接…</span>
+  </header>
+  <section>
+    <h2>配置</h2>
+    <label for="label">显示名称</label>
+    <input id="label" placeholder="Echo">
+    <button id="save">保存配置</button>
+    <p>配置保存在本机，模块更新后保留；游戏未运行时也能保存。</p>
+  </section>
+  <section>
+    <h2>发送消息 <output id="count">0</output></h2>
+    <label for="body">要回显的 JSON</label>
+    <textarea id="body" rows="5">{"message":"你好，模块","amount":1}</textarea>
+    <button id="send">发送到游戏内模块</button>
+    <button id="refresh" class="secondary">刷新状态</button>
+  </section>
+  <section>
+    <h2>回复与事件</h2>
+    <pre id="log" aria-live="polite"></pre>
+  </section>
+</main>
+</body>
+</html>

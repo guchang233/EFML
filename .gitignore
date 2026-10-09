@@ -1,0 +1,8 @@
+/build/
+/dist/
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.log

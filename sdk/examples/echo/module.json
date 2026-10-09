@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "abi": 1,
+  "id": "example.echo",
+  "name": "Echo / Counter",
+  "author": "EFML",
+  "version": "1.0.0",
+  "description": "Smallest complete EFML module: page messages, events, a game-thread counter and a service.",
+  "libraries": {
+    "windows-x64": "native/windows-x64/example.echo.dll"
+  },
+  "ui": "ui/index.html",
+  "default_configuration": { "label": "Echo" },
+  "dependencies": []
+}

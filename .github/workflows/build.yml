@@ -1,0 +1,31 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  native:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S native -B build/native-cmake -A x64
+      - name: Build
+        run: cmake --build build/native-cmake --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build/native-cmake -C Release --output-on-failure
+      - name: Also build with build.cmd
+        shell: cmd
+        run: native\build.cmd
+      - uses: actions/upload-artifact@v4
+        with:
+          name: efml-runtime
+          path: |
+            build/native-cmake/stage/Release/runtime/*.dll
+            build/native-cmake/stage/Release/runtime/*.exe
+            build/native-cmake/stage/Release/sdk/*.dll
+          if-no-files-found: error
