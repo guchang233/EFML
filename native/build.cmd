@@ -1,6 +1,6 @@
 @echo off
 rem Builds the EFML runtime with MSVC (no CMake needed) and runs the native tests.
-rem Output: build\native\{EFML.Host.dll, EFML.Bootstrap.dll, xinput1_4.dll, EFML.Injector.exe, efml-tests.exe}
+rem Output: build\native\{efml.exe, EFML.Host.dll, EFML.Bootstrap.dll, xinput1_4.dll, EFML.Injector.exe, efml-tests.exe}
 setlocal
 cd /d "%~dp0.."
 for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "EFML_VS=%%I"
@@ -40,7 +40,9 @@ if errorlevel 1 exit /b 1
 cl %CPP% native\loader\injector.cpp "%OBJ%\loader\injector.res" /Fo"%OBJ%\loader\injector.obj" /Fd"%OBJ%\loader\injector.pdb" /Fe"%OUT%\EFML.Injector.exe" /link %LINKSAFE% /MANIFEST:NO >nul
 if errorlevel 1 exit /b 1
 
-echo [4/5] Echo example module
+echo [4/5] efml.exe and the Echo example module
+cl %CPP% native\cli\efml.cpp /Fo"%OBJ%\loader\efml.obj" /Fd"%OBJ%\loader\efml.pdb" /Fe"%OUT%\efml.exe" /link %LINKSAFE% ws2_32.lib bcrypt.lib shell32.lib advapi32.lib >nul
+if errorlevel 1 exit /b 1
 if not exist "%OUT%\echo" mkdir "%OUT%\echo"
 cl %CPP% /LD /Inative\include sdk\examples\echo\native\echo.cpp /Fo"%OBJ%\tests\echo.obj" /Fd"%OBJ%\tests\echo.pdb" /Fe"%OUT%\echo\example.echo.dll" /link %LINKSAFE% >nul
 if errorlevel 1 exit /b 1

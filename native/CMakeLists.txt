@@ -48,6 +48,10 @@ add_executable(EFML.Injector loader/injector.cpp loader/injector.rc)
 target_link_options(EFML.Injector PRIVATE /MANIFEST:NO)
 set_target_properties(EFML.Injector PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
 
+add_executable(efml cli/efml.cpp)
+target_link_libraries(efml PRIVATE ws2_32 bcrypt shell32 advapi32)
+set_target_properties(efml PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
+
 # SDK example and tests.
 add_library(example.echo SHARED ../sdk/examples/echo/native/echo.cpp)
 target_include_directories(example.echo PRIVATE include)
