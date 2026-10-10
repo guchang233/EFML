@@ -105,4 +105,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
-        run: gh release create "$env:GITHUB_REF_NAME" dist/* --title "EFML $env:EFML_VERSION" --generate-notes
+        run: |
+          $notes = "docs/release-notes/$env:GITHUB_REF_NAME.md"
+          if (Test-Path $notes) {
+            gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem dist -File).FullName --title "EFML $env:EFML_VERSION" --notes-file $notes
+          } else {
+            gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem dist -File).FullName --title "EFML $env:EFML_VERSION" --generate-notes
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
