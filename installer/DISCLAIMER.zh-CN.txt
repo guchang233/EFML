@@ -1,0 +1,11 @@
+﻿EFML（Endfield Mod Loader）使用须知
+
+1. EFML 是《明日方舟：终末地》的第三方模组加载器，与鹰角网络无关，也不是 Better-Endfield 官方产品。
+
+2. EFML 会把模组代码加载进游戏进程（注入，或游戏目录中的 xinput1_4.dll 代理）。这可能违反游戏的服务条款，并可能被检测，导致账号受到限制。EFML 不会关闭或绕过任何反作弊。是否使用由你自行判断并承担风险。
+
+3. 模组由各自的作者提供，可以在游戏中执行任意代码。请只安装来源可信的模组。
+
+4. EFML 不收集或上传任何数据。模组、日志和设置保存在 %LOCALAPPDATA%\EFML，卸载 EFML 时保留；卸载会移除 EFML 放入游戏目录的代理文件。
+
+5. EFML 以 GNU AGPL-3.0 许可发布，源码见 https://github.com/guchang233/EFML 。其加载器、宿主与模块接口提取自 Better-Endfield（AGPL-3.0）。

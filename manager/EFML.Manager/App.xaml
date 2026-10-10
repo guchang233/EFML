@@ -1,0 +1,32 @@
+<Application
+    x:Class="EFML.Manager.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
+            </ResourceDictionary.MergedDictionaries>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="EfmlAccentBrush" Color="#FFE0B800" />
+                    <SolidColorBrush x:Key="EfmlOkBrush" Color="#FF2E7D32" />
+                    <SolidColorBrush x:Key="EfmlWarnBrush" Color="#FFB26A00" />
+                    <SolidColorBrush x:Key="EfmlErrorBrush" Color="#FFC62828" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="EfmlAccentBrush" Color="#FFFFD400" />
+                    <SolidColorBrush x:Key="EfmlOkBrush" Color="#FF6CCB5F" />
+                    <SolidColorBrush x:Key="EfmlWarnBrush" Color="#FFFFB547" />
+                    <SolidColorBrush x:Key="EfmlErrorBrush" Color="#FFFF6B6B" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="EfmlAccentBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+                    <SolidColorBrush x:Key="EfmlOkBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="EfmlWarnBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="EfmlErrorBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
