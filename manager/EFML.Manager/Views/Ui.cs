@@ -64,13 +64,20 @@ internal static class Ui
         return column;
     }
 
-    // A page: scrolling column with the standard margins.
+    // A page: scrolling column, left-aligned and at most 1100 wide, so it reflows the same way
+    // whether the navigation pane is open or collapsed.
     public static ScrollViewer Page(StackPanel content)
     {
         content.Padding = new Thickness(32, 24, 32, 32);
-        content.MaxWidth = 1100;
-        content.HorizontalAlignment = HorizontalAlignment.Stretch;
-        return new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var frame = new Grid();
+        frame.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star), MaxWidth = 1100 });
+        frame.Children.Add(content);
+        return new ScrollViewer
+        {
+            Content = frame,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
+        };
     }
 
     // A labelled status tile: caption, value and detail, with a coloured bar on the left.

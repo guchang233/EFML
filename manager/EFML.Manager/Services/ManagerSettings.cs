@@ -18,6 +18,7 @@ internal sealed class ManagerSettings
     public string Theme { get; set; } = "system";
     public bool MinimizeAfterLaunch { get; set; } = true;
     public bool FirstRunDone { get; set; }
+    public bool PaneOpen { get; set; } = true;
 
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
 

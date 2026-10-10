@@ -7,6 +7,15 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+            <!-- Endfield palette instead of the system accent: dark theme draws accents with the
+                 Light shades (yellow, black text), light theme with the Dark shades (black, white text). -->
+            <Color x:Key="SystemAccentColor">#FFFFD400</Color>
+            <Color x:Key="SystemAccentColorLight1">#FFFFDB33</Color>
+            <Color x:Key="SystemAccentColorLight2">#FFFFD400</Color>
+            <Color x:Key="SystemAccentColorLight3">#FFFFE466</Color>
+            <Color x:Key="SystemAccentColorDark1">#FF1A1A1A</Color>
+            <Color x:Key="SystemAccentColorDark2">#FF111111</Color>
+            <Color x:Key="SystemAccentColorDark3">#FF000000</Color>
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="EfmlAccentBrush" Color="#FFE0B800" />

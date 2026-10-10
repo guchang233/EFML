@@ -13,6 +13,7 @@ public sealed class MainWindow : Window
     internal ManagerSettings Settings { get; } = ManagerSettings.Load();
     private readonly Grid _root = new();
     private readonly NavigationView _navigation = new();
+    private readonly Grid _host = new();
     private readonly Dictionary<string, UIElement> _pages = new();
 
     public MainWindow()
@@ -23,12 +24,18 @@ public sealed class MainWindow : Window
         WindowPlacement.SetInitialSize(this, 1180, 800);
         WindowPlacement.SetMinimumSize(this, 900, 640);
 
+        // Fixed Left mode: collapsing leaves the icon strip and the content always reflows beside
+        // the pane (Auto mode would switch between inline and overlay panes with the width).
+        _navigation.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
         _navigation.IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed;
         _navigation.IsSettingsVisible = true;
         _navigation.OpenPaneLength = 220;
-        _navigation.CompactModeThresholdWidth = 720;
-        _navigation.ExpandedModeThresholdWidth = 1000;
+        _navigation.CompactPaneLength = 48;
+        _navigation.IsPaneOpen = Settings.PaneOpen;
+        _navigation.PaneOpened += (_, _) => RememberPane(true);
+        _navigation.PaneClosed += (_, _) => RememberPane(false);
         _navigation.PaneHeader = PaneHeader();
+        _navigation.Content = _host;
         _navigation.MenuItems.Add(Item("启动", "home", ""));
         _navigation.MenuItems.Add(Item("模组", "modules", ""));
         _navigation.FooterMenuItems.Add(Item("关于", "about", ""));
@@ -86,7 +93,23 @@ public sealed class MainWindow : Window
             };
             _pages[tag] = page;
         }
-        _navigation.Content = page;
+        // The navigation view keeps one content host; pages are swapped inside it.
+        _host.Children.Clear();
+        _host.Children.Add(page);
+    }
+
+    private void RememberPane(bool open)
+    {
+        if (Settings.PaneOpen == open) return;
+        Settings.PaneOpen = open;
+        try
+        {
+            Settings.Save();
+        }
+        catch (Exception exception)
+        {
+            App.CrashLog("SaveSettings", exception);
+        }
     }
 
     internal void ApplyTheme()
@@ -149,6 +172,6 @@ public sealed class MainWindow : Window
         {
             App.CrashLog("SaveSettings", exception);
         }
-        if (_navigation.Content is HomePage home) await home.RefreshAsync();
+        if (_host.Children.FirstOrDefault() is HomePage home) await home.RefreshAsync();
     }
 }
