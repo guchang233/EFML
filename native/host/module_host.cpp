@@ -186,21 +186,23 @@ struct ModuleHost::Impl {
     mutable std::mutex config_mutex;
     std::map<std::string, std::string> configs;
 
-    EFML_HostExtV1 ext{};
+    EFML_HostExtWithFeaturesV1 ext{};
 
     Impl() {
-        ext.struct_size = sizeof(EFML_HostExtV1);
-        ext.version = EFML_EXTENSION_V1;
-        ext.host_version = version.c_str();
-        ext.post_to_game_thread = &PostToGameThread;
-        ext.add_frame_callback = &AddFrameCallback;
-        ext.remove_frame_callback = &RemoveFrameCallback;
-        ext.is_game_thread = &IsGameThread;
-        ext.frame_count = &FrameCount;
-        ext.register_service = &RegisterService;
-        ext.get_service = &GetService;
-        ext.subscribe = &Subscribe;
-        ext.unsubscribe = &Unsubscribe;
+        auto& base=ext.base;
+        base.struct_size = sizeof(ext);
+        base.version = EFML_EXTENSION_V1;
+        base.host_version = version.c_str();
+        base.post_to_game_thread = &PostToGameThread;
+        base.add_frame_callback = &AddFrameCallback;
+        base.remove_frame_callback = &RemoveFrameCallback;
+        base.is_game_thread = &IsGameThread;
+        base.frame_count = &FrameCount;
+        base.register_service = &RegisterService;
+        base.get_service = &GetService;
+        base.subscribe = &Subscribe;
+        base.unsubscribe = &Unsubscribe;
+        ext.feature_flags = EFML_FEATURE_SHUTDOWN_BARRIER;
     }
 
     void Log(const std::string& source, const std::string& message) {
@@ -400,8 +402,27 @@ struct ModuleHost::Impl {
         if (options.hooks && options.hooks->disable_module) options.hooks->disable_module(options.hooks->context, m.id.c_str());
     }
 
-    void Disable(Module& m) {
+    bool Disable(Module& m, bool processExit = false) {
         if (m.active) {
+            if (m.entry == EFML_ENTRY_V1 && m.api &&
+                m.api->struct_size >= sizeof(EFML_ModuleWithShutdownBarrierV1)) {
+                const auto* guarded = reinterpret_cast<const EFML_ModuleWithShutdownBarrierV1*>(m.api);
+                if (guarded->prepare_shutdown) {
+                    BE_Result result = BE_Result_Failed;
+                    try { result = guarded->prepare_shutdown(); }
+                    catch (...) { m.error = "Pre-shutdown callback threw an exception"; }
+                    if (result != BE_Result_Ok) {
+                        if (!processExit) {
+                            m.status = "restoring";
+                            if (m.error.empty()) m.error = "Module is restoring native state before disable";
+                            m.retry_at = Clock::now() + std::chrono::milliseconds(100);
+                            return false;
+                        }
+                        Log(m.id, "Process exit before native restoration was confirmed");
+                    }
+                }
+            }
+            m.error.clear();
             m.active = false;
             Release(m);
             CallShutdown(m);
@@ -409,6 +430,7 @@ struct ModuleHost::Impl {
             Log(m.id, "Module stopped");
         }
         m.status = "disabled";
+        return true;
     }
 
     // Loads the library once (it stays pinned), then calls initialize.
@@ -438,7 +460,7 @@ struct ModuleHost::Impl {
             m.api = candidate;
             m.host.base = {sizeof(EFML_HostV1), 1, &m, m.id.c_str(), options.platform.c_str(), m.directory.c_str(),
                 runtime.load(), options.hooks, &LogMessage, &Reply, &Emit, &GetRuntime};
-            m.host.efml = &ext;
+            m.host.efml = &ext.base;
         }
         Require(m.api != nullptr, "Rejected module library requires restart");
         m.host.base.runtime = runtime.load();
@@ -555,7 +577,7 @@ struct ModuleHost::Impl {
         for (auto it = loaded_order.rbegin(); it != loaded_order.rend(); ++it) {
             if (!stop.contains(*it)) continue;
             auto& m = *modules.at(*it);
-            Disable(m);
+            if (!Disable(m)) continue;
             if (m.requested) {
                 m.status = "waiting_dependencies";
                 m.error = "Module dependency is inactive";
@@ -644,7 +666,7 @@ struct ModuleHost::Impl {
     bool RetryDue() const {
         const auto now = Clock::now();
         return std::any_of(modules.begin(), modules.end(), [&](const auto& item) {
-            return item.second->status == "retrying" && now >= item.second->retry_at;
+            return (item.second->status == "retrying" || item.second->status == "restoring") && now >= item.second->retry_at;
         });
     }
 
@@ -873,7 +895,7 @@ struct ModuleHost::Impl {
                 }
             }
         }
-        for (auto it = loaded_order.rbegin(); it != loaded_order.rend(); ++it) Disable(*modules.at(*it));
+        for (auto it = loaded_order.rbegin(); it != loaded_order.rend(); ++it) Disable(*modules.at(*it), true);
     }
 };
 
@@ -914,7 +936,7 @@ bool ModuleHost::Start(Options options) {
     auto& s = *impl_;
     if (s.worker.joinable()) return false;
     s.options = std::move(options);
-    s.ext.data_root = s.options.data_root.c_str();
+    s.ext.base.data_root = s.options.data_root.c_str();
     try {
         std::string error;
         Require(EnsureIndex(s.options.index, error), "Module index unavailable");

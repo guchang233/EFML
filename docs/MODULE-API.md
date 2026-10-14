@@ -117,6 +117,7 @@ efml->remove_frame_callback(host->context, frame_handle);
 - EFML 把游戏每帧都会调用的方法（场景中的 `CameraManager.TailLateTick`、UGUI 的 `EventSystem.Update`）作为帧来源，并用 `Time.frameCount` 去重，保证每帧只执行一次。
 - 游戏线程就绪之前提交的任务会排队等候；就绪时会发出 `game_thread_ready` 事件。
 - 模组停用时，EFML 会先移除它的帧回调和未执行的任务，并等当前这一帧执行完，再调用 `shutdown`。
+- 需要先恢复游戏原生状态的 EFML 模组可返回 `EFML_ModuleWithShutdownBarrierV1`（保留 V1 结构为首字段），并在 `prepare_shutdown` 中关闭新操作、请求游戏线程恢复。返回 `BE_Result_NotReady` 时普通停用延后，回调与钩子仍保留；EFML 随后重试。只有返回 `BE_Result_Ok` 才移除回调并调用 `shutdown`。使用前通过 `EFML_HasShutdownBarrier(efml)` 检查宿主支持；其他宿主和旧版 EFML 不提供保证。进程退出时会尝试一次，然后继续结束进程，不能用该机制代替游戏运行期间的恢复确认。
 - `is_game_thread()` 和 `frame_count()` 可以用来判断当前线程和帧计数。
 
 ### 服务（模组之间共享接口）

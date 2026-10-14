@@ -47,6 +47,15 @@ typedef struct BE_ThirdPartyModuleV1 {
     void(BE_CALL* shutdown)(void);   // Optional. Disabling a module calls it; it may be re-initialized later.
 } BE_ThirdPartyModuleV1;
 
+// Optional EFML-only tail. The base V1 layout and entry-point return type do
+// not change. On ordinary disable, EFML calls prepare_shutdown before it
+// withdraws game-thread work or hooks. NotReady/Failed defers disable, leaving
+// the module active so native restoration can finish on a later game frame.
+typedef struct EFML_ModuleWithShutdownBarrierV1 {
+    BE_ThirdPartyModuleV1 base;
+    BE_Result(BE_CALL* prepare_shutdown)(void);
+} EFML_ModuleWithShutdownBarrierV1;
+
 typedef const BE_ThirdPartyModuleV1*(BE_CALL* BE_GetThirdPartyModuleV1Fn)(void);
 
 // ---- EFML additions -------------------------------------------------------------------------
@@ -84,6 +93,17 @@ typedef struct EFML_HostExtV1 {
     BE_Result(BE_CALL* subscribe)(void* context, EFML_EventFn callback, void* user, uint64_t* handle);
     BE_Result(BE_CALL* unsubscribe)(void* context, uint64_t handle);
 } EFML_HostExtV1;
+
+#define EFML_FEATURE_SHUTDOWN_BARRIER 1u
+typedef struct EFML_HostExtWithFeaturesV1 {
+    EFML_HostExtV1 base;
+    uint32_t feature_flags;
+} EFML_HostExtWithFeaturesV1;
+
+static inline int EFML_HasShutdownBarrier(const EFML_HostExtV1* ext) {
+    return ext && ext->struct_size >= sizeof(EFML_HostExtWithFeaturesV1) &&
+        (((const EFML_HostExtWithFeaturesV1*)ext)->feature_flags & EFML_FEATURE_SHUTDOWN_BARRIER) != 0;
+}
 
 typedef struct EFML_HostV1 {
     BE_ThirdPartyHostV1 base;

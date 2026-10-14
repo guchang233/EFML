@@ -14,6 +14,7 @@ std::string configuration = "{}";
 uint64_t count = 0;
 uint64_t frame_handle = 0;
 std::atomic<uint64_t> frames_seen{0};
+std::atomic<int> shutdown_attempts{0};
 
 // A service other modules can fetch with get_service("example.echo.counter", 1).
 struct EchoCounterV1 {
@@ -39,6 +40,7 @@ BE_Result BE_CALL Initialize(const BE_ThirdPartyHostV1* provided, const char* js
     efml = EFML_GetExtension(provided);
     configuration = json ? json : "{}";
     count = 0;
+    shutdown_attempts = 0;
     if (efml) {
         efml->add_frame_callback(host->context, &OnFrame, nullptr, &frame_handle);
         efml->register_service(host->context, "example.echo.counter", 1, &counter_service);
@@ -74,9 +76,16 @@ void BE_CALL Shutdown() {
     efml = nullptr;
 }
 
-const BE_ThirdPartyModuleV1 echo_module{sizeof(BE_ThirdPartyModuleV1), 1, "example.echo",
-    Initialize, Configure, Message, Shutdown};
+BE_Result BE_CALL PrepareShutdown() {
+    const int attempt = ++shutdown_attempts;
+    return configuration.find("\"shutdown_wait\":3") != std::string::npos && attempt < 3
+        ? BE_Result_NotReady : BE_Result_Ok;
+}
+
+const EFML_ModuleWithShutdownBarrierV1 echo_module{
+    {sizeof(EFML_ModuleWithShutdownBarrierV1), 1, "example.echo", Initialize, Configure, Message, Shutdown},
+    PrepareShutdown};
 
 } // namespace
 
-EFML_DEFINE_MODULE(echo_module)
+EFML_DEFINE_MODULE(echo_module.base)

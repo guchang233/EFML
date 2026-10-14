@@ -253,8 +253,18 @@ int wmain(int argc, wchar_t** argv) {
         return host_event;
     }), "host events reach subscribers");
 
+    auto guarded = Request(port, token, "POST", "/configure",
+        {{"module_id", "example.echo"}, {"configuration", {{"label", "second"}, {"shutdown_wait", 3}}}});
+    Check(guarded.first == 200 && guarded.second.value("accepted", false), "shutdown-barrier fixture configured");
+    index["modules"][1]["configuration"] = {{"label", "second"}, {"shutdown_wait", 3}};
     index["modules"][1]["enabled"] = false;
     WriteJson(index_path, index);
+    Check(WaitFor([&] {
+        const auto now = Request(port, token, "GET", "/status").second;
+        return ModuleStatus(now, "example.echo").value("status", "") == "restoring";
+    }), "shutdown barrier defers disable before callbacks are withdrawn");
+    Check(Request(port, token, "POST", "/send", {{"module_id", "example.echo"}, {"request_id", "pending"}, {"body", 1}}).first == 200,
+        "module stays active while native restoration is pending");
     Check(WaitFor([&] {
         const auto now = Request(port, token, "GET", "/status").second;
         return ModuleStatus(now, "example.echo").value("status", "") == "disabled" &&
