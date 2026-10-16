@@ -4,7 +4,7 @@
 
 - **兼容 Better-Endfield 第三方模块**：包格式（`module.json` format 1 / ABI 1）、模块列表、本地 RPC 和模块页面接口都与 Better-Endfield 一致。为 Better Endfield 3.x（`BetterEndfield_GetThirdPartyModuleV1`）或 Next 4.x（`BetterEndfieldNext_GetThirdPartyModuleV1`）编译的模块无需重新编译即可加载。
 - **面向模组作者的扩展**：游戏线程任务与每帧回调、已挂接 IL2CPP 的模块工作线程、模组之间的服务、宿主事件、运行时就绪后加载及自动重试。
-- **两种加载方式**：由 EFML 启动游戏时注入（不写入游戏目录）；或在游戏目录放置 `xinput1_4.dll` 代理（无论从哪里启动游戏都会加载）。
+- **不直接启动游戏**：终末地 1.6.3 只接受从鹰角官方启动器启动。EFML 在游戏目录放一个 `xinput1_4.dll` 代理，你用官方启动器开始游戏时，游戏会自动加载它，再由它加载已启用的模组。EFML 的「启动游戏」按钮只负责准备加载组件并告诉你怎么启动。
 
 ## 下载与使用
 
@@ -18,13 +18,26 @@
 
 需要 Windows 10/11 x64 与 WebView2 运行时（Windows 11 自带）。
 
-1. 首次运行时，EFML 会查找游戏并安装运行时，然后让你选择加载方式（之后可以在「设置」中更改）。
+1. 首次运行时，EFML 会查找游戏并安装运行时。
 2. 在「模组」页导入模组的 `.zip`，并启用它。
-3. 在「启动」页启动游戏。页面上会实时显示游戏、宿主、游戏线程和各模组的状态，以及日志。
+3. 在「启动」页点击「启动游戏」：EFML 会安装（或更新）加载组件，并显示启动步骤。然后打开鹰角启动器，点击「开始游戏」。页面上会实时显示游戏、宿主、游戏线程和各模组的状态，以及日志。加载组件只需安装一次，以后直接从官方启动器开始游戏同样生效。
+
+EFML 不读取登录凭据，也不构造游戏启动参数；账号登录和游戏参数都由官方启动器处理。
 
 模组、日志和设置保存在 `%LOCALAPPDATA%\EFML`；设置环境变量 `EFML_HOME` 可以改用其他目录。卸载 EFML 时会保留这个目录，并移除 EFML 放入游戏目录的代理文件。
 
 也可以用命令行工具 `runtime\efml.exe` 完成同样的操作，例如 `efml status`、`efml add <模组.zip>`、`efml launch`、`efml logs`。运行 `efml help` 查看全部命令。
+
+```powershell
+# 安装加载组件（代理）并显示启动步骤；不会启动游戏
+runtime\efml.exe launch
+# 游戏中也可导入并启用一个新模块身份，无需重新启动官方启动器
+runtime\efml.exe add --dev "D:\MyMod\package"
+runtime\efml.exe enable my.mod
+runtime\efml.exe status
+```
+
+热加载取决于模组自己的初始化、依赖和停用清理能力。修改已经加载的 DLL 时，使用新模块身份或正常重启游戏；不能保证所有模组都能原地替换。
 
 ## 与 Better-Endfield 的关系
 
@@ -80,7 +93,7 @@ Better Endfield Next 4.0.0 暂时隐藏了第三方模块的管理入口，并�
 | `native/include/EFML/` | 公开 SDK 头文件（`Module.h`、`ModuleApi.h`、`HookChain.h`） |
 | `native/include/BetterEndfield*/` | 兼容 Better-Endfield 源码的头文件 |
 | `native/host/` | `EFML.Host.dll`：模块宿主、RPC、Hook 管理、IL2CPP 解析、游戏线程 |
-| `native/loader/` | `xinput1_4.dll` 代理、`EFML.Bootstrap.dll`、`EFML.Injector.exe` |
+| `native/loader/` | `xinput1_4.dll` 代理（`EFML.Bootstrap.dll`、`EFML.Injector.exe` 是旧版注入组件，管理器和命令行已不再使用） |
 | `native/cli/` | 命令行工具 `efml.exe` |
 | `native/tests/` | 宿主测试（不需要游戏） |
 | `manager/EFML.Manager/` | 管理器（C# / WinUI 3） |

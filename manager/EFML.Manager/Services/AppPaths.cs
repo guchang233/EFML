@@ -11,7 +11,7 @@ namespace EFML.Manager.Services;
 //   manager.json                     manager settings
 internal static class AppPaths
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.0.1";
     public static readonly string[] RuntimeFiles =
         ["EFML.Host.dll", "EFML.Bootstrap.dll", "EFML.Injector.exe", "xinput1_4.dll", "efml.exe"];
 

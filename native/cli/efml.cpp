@@ -357,7 +357,7 @@ int Status() {
     const auto runtime = InstalledRuntime();
     std::cout << "runtime   " << (runtime.empty() ? "not installed (run: efml setup)" : Utf8(runtime.wstring())) << "\n";
     const auto game = FindGame("");
-    std::cout << "game      " << (game.empty() ? "not found (efml launch --game <path>)" : Utf8(game.wstring())) << "\n";
+    std::cout << "game      " << (game.empty() ? "not found (efml proxy install --game <path>)" : Utf8(game.wstring())) << "\n";
     if (!game.empty()) {
         const auto proxy = game.parent_path() / L"xinput1_4.dll";
         std::cout << "proxy     " << (!fs::exists(proxy) ? "not installed" : IsEfmlProxy(proxy) ? "EFML proxy installed" : "foreign xinput1_4.dll (another loader)") << "\n";
@@ -457,37 +457,19 @@ int Proxy(bool install, const std::string& game_argument) {
     return 0;
 }
 
-int Launch(const std::string& game_argument, const std::vector<std::wstring>& extra) {
+// EFML does not start the game: Endfield 1.6.3 only accepts a start from the official launcher.
+// This makes sure the proxy is in place and tells the user how to start the game.
+int Launch(const std::string& game_argument) {
     const auto game = FindGame(game_argument);
     if (game.empty()) Fail("Endfield.exe not found; pass --game <path>");
-    IniWrite(L"Game", L"path", game.wstring());
     const auto proxy = game.parent_path() / L"xinput1_4.dll";
-    if (fs::exists(proxy) && IsEfmlProxy(proxy)) {
-        // The proxy loads EFML; start the game normally (it may ask for elevation itself).
-        if (reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", game.c_str(), nullptr, game.parent_path().c_str(), SW_SHOWNORMAL)) <= 32) Fail("could not start the game");
-        std::cout << "game started; the EFML proxy loads the runtime\n";
-        return 0;
-    }
-    const auto runtime = InstalledRuntime();
-    if (runtime.empty()) Fail("install the runtime first: efml setup");
-    std::wstring parameters = L"--game \"" + game.wstring() + L"\" --data-root \"" + DataRoot().wstring() + L"\"";
-    for (const auto& argument : extra) parameters += L" " + argument;
-    SHELLEXECUTEINFOW info{sizeof(info)};
-    info.fMask = SEE_MASK_NOCLOSEPROCESS;
-    info.lpVerb = L"runas";   // The injector needs administrator rights, like Better-Endfield's.
-    const auto injector = runtime / L"EFML.Injector.exe";
-    info.lpFile = injector.c_str();
-    info.lpParameters = parameters.c_str();
-    info.nShow = SW_HIDE;
-    if (!ShellExecuteExW(&info)) Fail("the injector did not start (elevation declined?)");
-    WaitForSingleObject(info.hProcess, 120000);
-    DWORD code = 1;
-    GetExitCodeProcess(info.hProcess, &code);
-    CloseHandle(info.hProcess);
-    const char* meaning[] = {"game started with EFML", "", "bad arguments", "runtime files missing", "the game did not start",
-        "injection failed (see logs\\loader.log)", "a foreign xinput1_4.dll is in the game folder"};
-    std::cout << (code < 7 ? meaning[code] : "injector failed") << " (exit " << code << ")\n";
-    return static_cast<int>(code);
+    if (fs::exists(proxy) && !IsEfmlProxy(proxy)) Fail("another loader's xinput1_4.dll is in the game folder; remove it with its own tool first");
+    if (!(fs::exists(proxy) && IsEfmlProxy(proxy))) Proxy(true, Utf8(game.wstring()));
+    IniWrite(L"Game", L"path", game.wstring());
+    std::cout << "EFML is ready. It does not start the game itself.\n"
+                 "Start Endfield from the official Hypergryph launcher (click Start Game);\n"
+                 "the proxy then loads EFML and the enabled modules. Run `efml status` to watch them.\n";
+    return 0;
 }
 
 void Usage() {
@@ -501,8 +483,8 @@ void Usage() {
         "  efml config <id> <json>           replace a module's configuration\n"
         "  efml send <id> <json>             send a message to a running module and print the reply\n"
         "  efml logs [id]                    recent module logs\n"
-        "  efml launch [--game <path>] [--manual-map|--manual-map-late] [-- game args]\n"
-        "                                    start the game with EFML (injection, or via the proxy)\n"
+        "  efml launch [--game <path>]       install the proxy if needed and explain how to start the game\n"
+        "                                    (EFML never starts the game; use the official launcher)\n"
         "  efml proxy install|remove [--game <path>]\n"
         "                                    xinput1_4.dll proxy: EFML loads however the game starts\n\n"
         "Data: %LOCALAPPDATA%\\EFML (override with EFML_HOME).\n";
@@ -541,18 +523,7 @@ int wmain(int argc, wchar_t** argv) {
         if (command == "proxy" && args.size() >= 2 && (args[1] == "install" || args[1] == "remove")) {
             return Proxy(args[1] == "install", option("--game"));
         }
-        if (command == "launch") {
-            std::vector<std::wstring> extra;
-            for (int i = 2; i < argc; ++i) {
-                const std::wstring a = argv[i];
-                if (a == L"--manual-map" || a == L"--manual-map-late" || a == L"--force") extra.push_back(a);
-                if (a == L"--") {
-                    extra.push_back(L"--");
-                    for (++i; i < argc; ++i) extra.push_back(L"\"" + std::wstring(argv[i]) + L"\"");
-                }
-            }
-            return Launch(option("--game"), extra);
-        }
+        if (command == "launch") return Launch(option("--game"));
     } catch (const std::exception& error) {
         Fail(error.what());
     }

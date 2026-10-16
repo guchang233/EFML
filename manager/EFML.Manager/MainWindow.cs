@@ -122,12 +122,7 @@ public sealed class MainWindow : Window
         };
     }
 
-    internal void Minimize()
-    {
-        if (AppWindow.Presenter is OverlappedPresenter presenter) presenter.Minimize();
-    }
-
-    // First start: find the game, install the runtime, and let the user pick the load mode.
+    // First start: find the game and install the runtime.
     private async Task FirstRunAsync()
     {
         try
@@ -145,23 +140,17 @@ public sealed class MainWindow : Window
         }
         if (!Settings.FirstRunDone)
         {
-            var choice = new RadioButtons();
-            choice.Items.Add(new RadioButton { Content = "注入（推荐）：不改动游戏目录，从 EFML 启动游戏，每次启动确认一次管理员权限" });
-            choice.Items.Add(new RadioButton { Content = "xinput 代理：在游戏目录放一个 xinput1_4.dll，从任何启动器启动都会加载" });
-            choice.SelectedIndex = 0;
             var dialog = new ContentDialog
             {
                 XamlRoot = _root.XamlRoot,
                 Title = "欢迎使用 EFML",
                 Content = Ui.Column(12,
                     Ui.Text(GameDiscovery.IsGameExecutable(Settings.GamePath) ? "已找到游戏：" + Settings.GamePath : "没有自动找到游戏，稍后可以在「设置」中选择 Endfield.exe。"),
-                    Ui.Text("选择游戏加载 EFML 的方式（之后可以在「设置」中更改）："),
-                    choice),
+                    Ui.Text("EFML 不直接启动游戏：先在「模组」里安装并启用模组，再到「启动」页点击「启动游戏」，EFML 会准备好加载组件，然后请用鹰角官方启动器开始游戏，模组会自动加载。")),
                 PrimaryButtonText = "开始使用",
                 DefaultButton = ContentDialogButton.Primary
             };
             await dialog.ShowAsync();
-            Settings.LoadMode = choice.SelectedIndex == 1 ? LoadMode.Proxy : LoadMode.Inject;
             Settings.FirstRunDone = true;
         }
         try
