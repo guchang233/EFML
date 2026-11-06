@@ -7,6 +7,8 @@
 #include <shellapi.h>
 
 #include "../host/version.h"
+#include "../loader/dev_stage.h"
+#include "crash_log.h"
 #include "../vendor/nlohmann/json.hpp"
 
 #include <algorithm>
@@ -15,6 +17,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -47,7 +50,11 @@ std::wstring Env(const wchar_t* name) {
     return size == 0 || size >= buffer.size() ? std::wstring() : std::wstring(buffer.data(), size);
 }
 
+// Set while a command works on an explicit --home; otherwise EFML_HOME or %LOCALAPPDATA%\EFML.
+fs::path g_home_override;
+
 fs::path DataRoot() {
+    if (!g_home_override.empty()) return g_home_override;
     const auto home = Env(L"EFML_HOME");
     return home.empty() ? fs::path(Env(L"LOCALAPPDATA")) / L"EFML" : fs::path(home);
 }
@@ -472,6 +479,125 @@ int Launch(const std::string& game_argument) {
     return 0;
 }
 
+// Development switch: copy the package as <id>.dev<N> into every home and queue the switch for the
+// next game start. index.json and a running game are not touched.
+int Stage(const std::string& package_argument, const std::vector<std::string>& homes) {
+    const fs::path package = fs::absolute(Wide(package_argument));
+    if (!fs::is_directory(package)) Fail("stage needs a package folder (with module.json): " + package_argument);
+    std::vector<fs::path> roots;
+    for (const auto& home : homes) roots.push_back(fs::absolute(Wide(home)));
+    if (roots.empty()) roots.push_back(DataRoot());
+    for (const auto& root : roots) {
+        g_home_override = root;
+        SaveIndex(LoadIndex());   // creates the index (port, token) in a fresh home; validates an existing one
+    }
+    g_home_override.clear();
+    const auto results = EFML::DevStage::StageMany(roots, package);
+    for (const auto& result : results) {
+        g_home_override = result.root;
+        const auto live = Rpc(LoadIndex(), "GET", "/status");
+        std::cout << "staged " << result.id << " in " << Utf8(result.root.wstring()) << "\n"
+                  << "  package  " << Utf8(result.directory.wstring()) << "\n"
+                  << (live ? "  game running (pid " + std::to_string((*live)["host"].value("pid", 0)) + "); it keeps its current modules, the switch happens at the next start\n"
+                           : std::string("  switches at the next game start (or now: efml apply-staged --home <dir>)\n"));
+    }
+    g_home_override.clear();
+    return 0;
+}
+
+// What the loader does at game start, for a home whose game is closed.
+int ApplyStaged(const std::vector<std::string>& homes) {
+    std::vector<fs::path> roots;
+    for (const auto& home : homes) roots.push_back(fs::absolute(Wide(home)));
+    if (roots.empty()) roots.push_back(DataRoot());
+    int code = 0;
+    for (const auto& root : roots) {
+        g_home_override = root;
+        std::cout << Utf8(root.wstring()) << "\n";
+        if (fs::exists(IndexPath()) && Rpc(LoadIndex(), "GET", "/status")) {
+            std::cout << "  game running; left alone (the switch happens at its next start)\n";
+            code = 1;
+            continue;
+        }
+        const auto outcome = EFML::DevStage::ApplyPending(root);
+        if (!outcome.attempted) std::cout << "  nothing staged\n";
+        for (const auto& line : outcome.log) std::cout << "  " << line << "\n";
+        if (outcome.failed) code = 1;
+    }
+    g_home_override.clear();
+    return code;
+}
+
+// Crash reports written by the host (crash\crash.log). By default only the ones worth a look:
+// fatal faults, or faults with an EFML module on the stack.
+int Crash(bool json, bool all, size_t last) {
+    const auto path = DataRoot() / L"crash" / L"crash.log";
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        if (json) std::cout << "[]\n";
+        else std::cout << "No crash log yet (" << Utf8(path.wstring()) << ").\n";
+        return 0;
+    }
+    std::stringstream text;
+    text << in.rdbuf();
+    J selected = J::array();
+    for (const auto& report : EFML::CrashLog::Parse(text.str())) {
+        if (report.contains("process_start")) {
+            if (all) selected.push_back(report);
+            continue;
+        }
+        if (all || report.value("fatal", false) || !report["modules_on_stack"].empty()) selected.push_back(report);
+    }
+    // Keep the newest `last` reports (process markers ride along).
+    size_t reports = 0;
+    size_t first = selected.size();
+    while (first > 0 && reports < last) {
+        --first;
+        if (!selected[first].contains("process_start")) ++reports;
+    }
+    J out = J::array();
+    for (size_t i = first; i < selected.size(); ++i) out.push_back(selected[i]);
+    if (json) {
+        std::cout << out.dump(2) << "\n";
+        return 0;
+    }
+    if (reports == 0) std::cout << "No crash reports" << (all ? "" : " worth a look (use --all for every first-chance fault)") << ".\n";
+    for (const auto& r : out) {
+        if (r.contains("process_start")) {
+            std::cout << "---- " << r["process_start"].get<std::string>() << "\n";
+            continue;
+        }
+        std::cout << "\n" << r.value("time", "") << (r.value("fatal", false) ? "  FATAL" : "  first-chance") << "\n  "
+                  << r.value("exception", "") << " " << r.value("code", "");
+        if (r.contains("access")) std::cout << ", " << r["access"].value("kind", "") << " " << r["access"].value("address", "");
+        if (r.contains("location")) {
+            const auto& l = r["location"];
+            std::cout << " at " << l.value("address", "");
+            if (l.contains("method")) std::cout << "  " << l["method"].get<std::string>();
+        }
+        std::cout << "\n";
+        if (!r["modules_on_stack"].empty()) {
+            std::cout << "  modules on stack:";
+            for (const auto& id : r["modules_on_stack"]) std::cout << " " << id.get<std::string>();
+            std::cout << "\n";
+        }
+        for (const auto& step : r["steps"])
+            std::cout << "  " << step.value("module", "") << " was at: " << step.value("step", "") << "\n";
+        size_t shown = 0;
+        for (const auto& frame : r["stack"]) {
+            if (++shown > 12) {
+                std::cout << "    ... " << r["stack"].size() - 12 << " more (efml crash --json for all)\n";
+                break;
+            }
+            std::cout << "    #" << frame.value("index", 0) << " " << frame.value("address", "");
+            if (frame.contains("method")) std::cout << "  " << frame["method"].get<std::string>();
+            if (frame.contains("module")) std::cout << "  [module " << frame["module"].get<std::string>() << "]";
+            std::cout << "\n";
+        }
+    }
+    return 0;
+}
+
 void Usage() {
     std::cout <<
         "EFML " EFML_VERSION " - Endfield Mod Loader\n\n"
@@ -479,10 +605,18 @@ void Usage() {
         "  efml status                       runtime, game, proxy, live host and module states\n"
         "  efml add <module.zip|folder>      install or update a module\n"
         "  efml add --dev <folder>           register a module folder in place (development)\n"
+        "  efml stage <folder> [--home <dir>]...\n"
+        "                                    copy as <id>.dev<N>; switch to it at the next game start\n"
+        "                                    (repeat --home for each game instance's EFML_HOME)\n"
+        "  efml apply-staged [--home <dir>]...\n"
+        "                                    apply staged switches now (only while that game is closed)\n"
         "  efml enable|disable|remove <id>\n"
         "  efml config <id> <json>           replace a module's configuration\n"
         "  efml send <id> <json>             send a message to a running module and print the reply\n"
         "  efml logs [id]                    recent module logs\n"
+        "  efml crash [--json] [--all] [--last <n>]\n"
+        "                                    crash reports: fatal faults or faults with a module on the\n"
+        "                                    stack (--all: every first-chance fault); --json for tools\n"
         "  efml launch [--game <path>]       install the proxy if needed and explain how to start the game\n"
         "                                    (EFML never starts the game; use the official launcher)\n"
         "  efml proxy install|remove [--game <path>]\n"
@@ -520,10 +654,34 @@ int wmain(int argc, wchar_t** argv) {
         if (command == "config" && args.size() >= 3) return Configure(args[1], args[2]);
         if (command == "send" && args.size() >= 3) return Send(args[1], args[2]);
         if (command == "logs") return Logs(args.size() > 1 ? args[1] : "");
+        if (command == "crash") {
+            bool json = false, all = false;
+            size_t last = 10;
+            for (size_t i = 1; i < args.size(); ++i) {
+                if (args[i] == "--json") json = true;
+                else if (args[i] == "--all") all = true;
+                else if (args[i] == "--last" && i + 1 < args.size()) last = std::max<size_t>(1, std::stoul(args[++i]));
+                else Fail("unknown option " + args[i]);
+            }
+            return Crash(json, all, last);
+        }
         if (command == "proxy" && args.size() >= 2 && (args[1] == "install" || args[1] == "remove")) {
             return Proxy(args[1] == "install", option("--game"));
         }
         if (command == "launch") return Launch(option("--game"));
+        if (command == "stage" || command == "apply-staged") {
+            std::vector<std::string> homes, positional;
+            for (size_t i = 1; i < args.size(); ++i) {
+                if (args[i] == "--home") {
+                    if (i + 1 >= args.size()) Fail("--home needs a folder");
+                    homes.push_back(args[++i]);
+                } else {
+                    positional.push_back(args[i]);
+                }
+            }
+            if (command == "stage" && positional.size() == 1) return Stage(positional[0], homes);
+            if (command == "apply-staged" && positional.empty()) return ApplyStaged(homes);
+        }
     } catch (const std::exception& error) {
         Fail(error.what());
     }

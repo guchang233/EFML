@@ -3,6 +3,7 @@
 //   EFML_XINPUT_PROXY  -> xinput1_4.dll placed in the game folder; the game loads it at startup.
 //   EFML_BOOTSTRAP     -> EFML.Bootstrap.dll, loaded into the game by EFML.Injector.exe.
 // Both start a worker that loads the Host once IL2CPP exists.
+#include "dev_stage.h"
 #include "loader_config.h"
 
 #include <Windows.h>
@@ -44,6 +45,10 @@ std::string Narrow(const std::wstring& text) {
 DWORD WINAPI Worker(void*) {
     const auto root = EFML::Loader::DataRoot();
     EFML::Loader::LoaderLog(root, EFML_LOADER_NAME " started");
+    // `efml stage` queues dev module switches; apply them before the Host first reads index.json.
+    if (!root.empty()) {
+        for (const auto& line : EFML::DevStage::ApplyPending(root).log) EFML::Loader::LoaderLog(root, line);
+    }
     if (!EFML::Loader::ShouldLoadHost(root)) {
         EFML::Loader::LoaderLog(root, "Host disabled by loader.ini");
         return 0;

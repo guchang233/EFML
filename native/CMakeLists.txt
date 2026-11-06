@@ -23,6 +23,7 @@ target_include_directories(minhook PUBLIC vendor/minhook/include)
 
 add_library(EFML.Host SHARED
     host/bootstrap.cpp
+    host/crash_reporter.cpp
     host/dynamic_resolver.cpp
     host/game_thread.cpp
     host/hook_broker.cpp
@@ -66,7 +67,8 @@ add_executable(efml-tests
     host/game_thread.cpp
     host/logging.cpp
     host/module_host.cpp
-    host/paths.cpp)
+    host/paths.cpp
+    host/crash_reporter.cpp)
 target_include_directories(efml-tests PRIVATE include)
 target_link_libraries(efml-tests PRIVATE ws2_32 bcrypt)
 set_target_properties(efml-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/tests)
@@ -74,3 +76,9 @@ add_dependencies(efml-tests example.echo test.legacy)
 
 enable_testing()
 add_test(NAME efml-module-host COMMAND efml-tests $<TARGET_FILE:example.echo> $<TARGET_FILE:test.legacy>)
+add_executable(efml-crash-tests tests/crash_reporter_test.cpp host/crash_reporter.cpp)
+set_target_properties(efml-crash-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/tests)
+add_test(NAME efml-crash-reporter COMMAND efml-crash-tests)
+add_executable(efml-stage-tests tests/dev_stage_test.cpp)
+set_target_properties(efml-stage-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/tests)
+add_test(NAME efml-dev-stage COMMAND efml-stage-tests)

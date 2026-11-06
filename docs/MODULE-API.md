@@ -148,6 +148,36 @@ efml->subscribe(host->context, &OnEvent, nullptr, nullptr);
 
 事件在模块工作线程上投递。
 
+### 崩溃记录（1.2 起）
+
+游戏出现内存访问错误、非法指令、栈溢出等异常时，宿主把下列内容写入 `%EFML_HOME%\crash\crash.log`：
+- 异常的模块+偏移位置和寄存器。
+- 从出错点展开的调用栈；落在某个模组 DLL 里的帧标出模组 id，落在已解析的游戏方法里的帧标出方法名。
+- 每个模组最后标记的步骤。
+
+异常在第一时间记录，游戏可能随后自行处理，所以每个地址每个进程只记一次；游戏真正因此退出时会额外写一条标为 `FATAL` 的记录。
+
+模组用 `crash_mark` 说明自己正在做什么，崩溃时就能看出出错发生在哪一步：
+
+```cpp
+#include "EFML/Module.h"
+static EFML_CrashMarkFn mark = nullptr;
+// initialize 中：
+mark = EFML_GetCrashMark(EFML_GetExtension(host));   // 旧版 EFML 上为空
+// 之后：
+if (mark) mark(host->context, "apply_world", "peer 2");   // 步骤、细节都会被复制
+if (mark) mark(host->context, nullptr, nullptr);          // 清除
+```
+
+`crash_mark` 不加锁也不分配内存，可以每帧调用。
+
+查看记录：
+- 管理器「崩溃记录」页；
+- `efml crash`（只列致命崩溃和栈上有模组的记录，`--all` 列出全部，`--last <n>` 控制条数）；
+- `efml crash --json`（结构化输出，便于脚本和 AI 读取）。
+
+在崩溃目录里放一个空文件 `minidump.on`，或设置环境变量 `EFML_MINIDUMP=1`，致命崩溃时还会写内存转储（保留最近 5 个）。
+
 ## 模组页面
 
 模组可以自带一个网页（`ui`），在管理器里点击「打开模组页面」后，显示在独立窗口中（WebView2）。每个已安装的版本都有独立的 https 来源，页面只能读取自己包内的文件，不能跳转到外部网址。请把依赖的 JS、CSS 和字体都打进包里，不要引用 CDN。
@@ -183,8 +213,26 @@ const status = await host.status();    // { connected, module }
 2. 注册开发文件夹，EFML 直接从该文件夹加载、不复制：在管理器里点「开发：注册文件夹」，或执行 `efml add --dev <文件夹>`。
 3. 在 EFML 里点「启动游戏」准备加载组件，再用鹰角官方启动器开始游戏（EFML 不直接启动游戏）。查看日志：管理器「启动」页，`efml logs <id>`，或 `%LOCALAPPDATA%\EFML\logs\EFML.log`。
 4. 不开页面也能给模组发消息：`efml send <id> "{\"action\":\"ping\"}"`。
-5. 已加载的 DLL 不会被替换：改动后用新的模块身份注册开发文件夹（`efml add --dev`），游戏正在运行时也会立即尝试加载；沿用同一个身份则需要重启游戏。
+5. 已加载的 DLL 不会被替换：改动后用新的模块身份注册开发文件夹（`efml add --dev`），游戏正在运行时也会立即尝试加载；沿用同一个身份则需要重启游戏。日常换版建议用下面的 `efml stage`。
 6. 发布时把文件夹内容打成 ZIP（`module.json` 必须在 ZIP 根目录）。
+
+### 开发换版（`efml stage`）
+
+每次改完 DLL，不必手改 `module.json` 的 `id`，也不用在游戏运行时替换文件：
+
+```bat
+rem 房主用默认配置（%LOCALAPPDATA%\EFML），房客用自己的 EFML_HOME；--home 可重复
+efml stage "D:\MyMod\package" --home "%LOCALAPPDATA%\EFML" --home "D:\duo\client2\EFML"
+```
+
+- 把包复制到 `<EFML_HOME>\modules\packages\`，副本里的 `id` 改为 `<原id>.dev<N>`。`N` 对每个原 id 递增（记在 `modules\dev-builds.json`，并参考模块列表里已有的编号）；一次传多个 `--home` 时所有配置档用同一个 `N`。
+- 只写「待切换」清单 `modules\dev-pending.json`，**不改** `index.json`，也不连接、不影响正在运行的游戏：当前进程继续用已加载的版本。多次 stage 只保留最新一版待切换，被取代、从未加载过的副本会删除。
+- 下次游戏启动时，加载器（`xinput1_4.dll` 代理或 `EFML.Bootstrap.dll`）在载入宿主、宿主读取模块列表之前应用清单：启用新的 `.dev<N>`，停用原 id 和同一原 id 的旧开发 id；配置沿用之前启用的那一版。只保留上一个开发版（停用状态，便于回退），更早的记录移除，其文件夹记入 `retired_directories`。
+- 应用是整体的：新列表按宿主同样的规则校验后，用一次原子重命名替换 `index.json`。模块列表无效、待切换的包缺失或 id 不符时，`index.json` 一个字节也不改，原因写入 `logs\loader.log`；清单移到 `dev-pending.rejected`（列表本身无法读取时则保留到下次启动重试）。
+- 游戏已经关闭、想立即切换时可执行 `efml apply-staged [--home <dir>]...`，效果与启动时相同；检测到该配置档的游戏仍在运行会拒绝。
+- 回退：`efml enable <原id或旧 .devN>` 再 `efml disable <新 .devN>`。依赖原 id 的其他模组（`dependencies`）在开发版期间找不到它，需要时临时改依赖或直接用原 id 安装。
+
+**热重载的限制**：在游戏运行中停用旧版、加载新版（不重启）只适用于声明了 `prepare_shutdown`（`EFML_ModuleWithShutdownBarrierV1`）并能在其中把游戏恢复原状、且**不持有任何托管（IL2CPP）对象**的模组。持有托管对象、类型引用或 GC 句柄的模组在卸载后会让 IL2CPP 的 GC 扫描到失效内存（曾崩在 `il2cpp_unity_liveness_calculation_from_root`），这类模组只能用 `efml stage` 加重启游戏换版。
 
 本地编译示例：
 

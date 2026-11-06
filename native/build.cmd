@@ -50,7 +50,16 @@ if errorlevel 1 exit /b 1
 echo [5/5] Tests
 cl %CPP% /LD /Inative\include native\tests\legacy_module.cpp /Fo"%OBJ%\tests\legacy.obj" /Fd"%OBJ%\tests\legacy.pdb" /Fe"%OUT%\test.legacy.dll" /link %LINKSAFE% >nul
 if errorlevel 1 exit /b 1
-cl %CPP% /Inative\include /Inative\vendor\minhook\include native\tests\module_host_test.cpp native\host\module_host.cpp native\host\game_thread.cpp native\host\paths.cpp native\host\logging.cpp /Fo"%OBJ%\tests\\" /Fd"%OBJ%\tests\\" /Fe"%OUT%\efml-tests.exe" /link ws2_32.lib bcrypt.lib >nul
+cl %CPP% /Inative\include /Inative\vendor\minhook\include native\tests\module_host_test.cpp native\host\module_host.cpp native\host\game_thread.cpp native\host\paths.cpp native\host\logging.cpp native\host\crash_reporter.cpp /Fo"%OBJ%\tests\\" /Fd"%OBJ%\tests\\" /Fe"%OUT%\efml-tests.exe" /link ws2_32.lib bcrypt.lib >nul
+if errorlevel 1 exit /b 1
+if not exist "%OBJ%\crash" mkdir "%OBJ%\crash"
+cl %CPP% native\tests\crash_reporter_test.cpp native\host\crash_reporter.cpp /Fo"%OBJ%\crash\\" /Fd"%OBJ%\crash\\" /Fe"%OUT%\efml-crash-tests.exe" /link /INCREMENTAL:NO >nul
+if errorlevel 1 exit /b 1
+"%OUT%\efml-crash-tests.exe"
+if errorlevel 1 exit /b 1
+cl %CPP% native\tests\dev_stage_test.cpp /Fo"%OBJ%\tests\dev_stage_test.obj" /Fd"%OBJ%\tests\dev_stage_test.pdb" /Fe"%OUT%\efml-stage-tests.exe" >nul
 if errorlevel 1 exit /b 1
 "%OUT%\efml-tests.exe" "%OUT%\echo\example.echo.dll" "%OUT%\test.legacy.dll"
+if errorlevel 1 exit /b 1
+"%OUT%\efml-stage-tests.exe"
 exit /b %errorlevel%

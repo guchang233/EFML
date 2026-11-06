@@ -8,6 +8,7 @@
 
 #include "module_host.h"
 
+#include "crash_reporter.h"
 #include "game_thread.h"
 #include "paths.h"
 #include "version.h"
@@ -142,6 +143,7 @@ struct ModuleHost::Impl {
         std::string status = "disabled", error, entry, name, version;
         bool requested = false, active = false, pinned = false, restart = false, early = false;
         int retries = 0;
+        int crash_slot = -1;
         Clock::time_point retry_at{};
         void* library = nullptr;
         const BE_ThirdPartyModuleV1* api = nullptr;
@@ -186,10 +188,10 @@ struct ModuleHost::Impl {
     mutable std::mutex config_mutex;
     std::map<std::string, std::string> configs;
 
-    EFML_HostExtWithFeaturesV1 ext{};
+    EFML_HostExtWithCrashMarkV1 ext{};
 
     Impl() {
-        auto& base=ext.base;
+        auto& base=ext.base.base;
         base.struct_size = sizeof(ext);
         base.version = EFML_EXTENSION_V1;
         base.host_version = version.c_str();
@@ -202,7 +204,8 @@ struct ModuleHost::Impl {
         base.get_service = &GetService;
         base.subscribe = &Subscribe;
         base.unsubscribe = &Unsubscribe;
-        ext.feature_flags = EFML_FEATURE_SHUTDOWN_BARRIER;
+        ext.base.feature_flags = EFML_FEATURE_SHUTDOWN_BARRIER | EFML_FEATURE_CRASH_MARK;
+        ext.crash_mark = &CrashMark;
     }
 
     void Log(const std::string& source, const std::string& message) {
@@ -223,6 +226,11 @@ struct ModuleHost::Impl {
             m->logs.push_back(text);
         }
         m->owner->Log(m->id, text);
+    }
+
+    static void BE_CALL CrashMark(void* context, const char* step, const char* detail) {
+        auto* m = Of(context);
+        if (m) CrashReporter::Instance().Mark(m->crash_slot, step, detail);
     }
 
     static const BE_HostApiV1* BE_CALL GetRuntime(void* context) {
@@ -444,6 +452,7 @@ struct ModuleHost::Impl {
                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
             Require(m.library, "Native module library failed to load");
             m.pinned = true;
+            m.crash_slot = CrashReporter::Instance().RegisterModule(m.id, static_cast<HMODULE>(m.library));
             BE_GetThirdPartyModuleV1Fn entry = nullptr;
             for (const char* name : kEntries) {
                 entry = reinterpret_cast<BE_GetThirdPartyModuleV1Fn>(GetProcAddress(static_cast<HMODULE>(m.library), name));
@@ -460,7 +469,7 @@ struct ModuleHost::Impl {
             m.api = candidate;
             m.host.base = {sizeof(EFML_HostV1), 1, &m, m.id.c_str(), options.platform.c_str(), m.directory.c_str(),
                 runtime.load(), options.hooks, &LogMessage, &Reply, &Emit, &GetRuntime};
-            m.host.efml = &ext.base;
+            m.host.efml = &ext.base.base;
         }
         Require(m.api != nullptr, "Rejected module library requires restart");
         m.host.base.runtime = runtime.load();
@@ -883,6 +892,11 @@ struct ModuleHost::Impl {
             }
             DispatchEvents();
             DeliverMessages();
+            if (listener == INVALID_SOCKET) {
+                // No manager connection in this process; keep the module loop alive.
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            }
             fd_set set;
             FD_ZERO(&set);
             FD_SET(listener, &set);
@@ -936,7 +950,7 @@ bool ModuleHost::Start(Options options) {
     auto& s = *impl_;
     if (s.worker.joinable()) return false;
     s.options = std::move(options);
-    s.ext.base.data_root = s.options.data_root.c_str();
+    s.ext.base.base.data_root = s.options.data_root.c_str();
     try {
         std::string error;
         Require(EnsureIndex(s.options.index, error), "Module index unavailable");
@@ -957,8 +971,17 @@ bool ModuleHost::Start(Options options) {
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         address.sin_port = htons(s.port);
-        Require(bind(s.listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0 &&
-            listen(s.listener, 8) == 0, "Localhost module port unavailable");
+        if (bind(s.listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
+            listen(s.listener, 8) != 0) {
+            // A second client on the same machine shares this data root and cannot
+            // own the same localhost port. The manager connection is a convenience,
+            // not a requirement: modules must still load in that process, otherwise
+            // the second client silently runs without a loader.
+            closesocket(s.listener);
+            s.listener = INVALID_SOCKET;
+            s.Log("host.modules", "Localhost module port " + std::to_string(s.port) +
+                " is busy; loading modules without a manager connection");
+        }
         s.stamp = std::filesystem::last_write_time(s.options.index);
         s.stopping = false;
         s.worker = std::thread([&s] { s.Loop(); });

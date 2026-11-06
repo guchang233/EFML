@@ -1,6 +1,7 @@
 // Derived from Better-Endfield's host_runtime.cpp (https://github.com/Dr-hydra/Better-Endfield), AGPL-3.0.
 #include "host_runtime.h"
 
+#include "crash_reporter.h"
 #include "dynamic_resolver.h"
 #include "game_thread.h"
 #include "hook_broker.h"
@@ -79,6 +80,7 @@ HostRuntime::~HostRuntime() {
     if (modules_) modules_->Stop();
     if (hooks_) hooks_->Shutdown();
     if (resolver_) resolver_->DetachCurrentThread();
+    CrashReporter::Instance().Uninstall();
 }
 
 void HostRuntime::Run() {
@@ -87,6 +89,8 @@ void HostRuntime::Run() {
     logger_ = std::make_unique<Logger>();
     logger_->Initialize(paths_.log_root);
     logger_->Write("host", "EFML " EFML_VERSION " starting in " + ProcessName() + "; data " + data_root_utf8_);
+    CrashReporter::Instance().Install(paths_.data_root / L"crash", ProcessName());
+    logger_->Write("host", "Crash log: " + ToUtf8(CrashReporter::Instance().LogPath().wstring()));
     for (const wchar_t* other : {L"BetterEndfieldNext.Host.dll", L"BetterEndfield.Host.dll"}) {
         if (GetModuleHandleW(other)) {
             logger_->Write("host", "Warning: " + ToUtf8(other) +
@@ -178,6 +182,7 @@ BE_Result BE_CALL HostRuntime::ResolveMethodCallback(void* context, const BE_Met
     const BE_Result status = runtime->resolver_->ResolveMethod(*descriptor, *result, error);
     if (status != BE_Result_Ok) runtime->logger_->Write("host.resolver", error);
     if (status == BE_Result_Ok && runtime->hooks_) runtime->hooks_->DescribeEntry(result->method_pointer, MethodLabel(*descriptor));
+    if (status == BE_Result_Ok) CrashReporter::Instance().AddLabel(result->method_pointer, MethodLabel(*descriptor));
     return status;
 }
 

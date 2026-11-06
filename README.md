@@ -37,7 +37,13 @@ runtime\efml.exe enable my.mod
 runtime\efml.exe status
 ```
 
-热加载取决于模组自己的初始化、依赖和停用清理能力。修改已经加载的 DLL 时，使用新模块身份或正常重启游戏；不能保证所有模组都能原地替换。
+热加载取决于模组自己的初始化、依赖和停用清理能力。修改已经加载的 DLL 时，使用新模块身份或正常重启游戏；不能保证所有模组都能原地替换。只有声明了 `prepare_shutdown` 且不持有托管对象的模组才适合热重载。
+
+开发期换版用 `efml stage`：复制包并把 id 改成 `<原id>.dev<N>`，下次游戏启动时自动只启用最新开发版，不影响正在运行的游戏；`--home` 可重复，一次更新房主和房客两套配置。详见 [docs/MODULE-API.md](docs/MODULE-API.md#开发换版efml-stage)。
+
+```powershell
+runtime\efml.exe stage "D:\MyMod\package" --home "$env:LOCALAPPDATA\EFML" --home "D:\duo\client2\EFML"
+```
 
 ## 与 Better-Endfield 的关系
 
@@ -65,6 +71,8 @@ Better Endfield Next 4.0.0 暂时隐藏了第三方模块的管理入口，并�
 
 - 注册开发文件夹，在原位置加载模组，无需打包、复制。
 - 命令行工具 `efml.exe`，可以安装、启用模组，向模组发送消息，查看日志，适合脚本和 CI。
+- 崩溃记录：游戏出错时记下调用栈、栈上有哪些模组以及每个模组当时在做什么。在管理器「崩溃记录」页查看，或用 `efml crash`（`--json` 给脚本和 AI 用）。模组可以用 `crash_mark` 标注自己正在执行的步骤。
+- 开发换版：`efml stage` 自动生成开发版身份，下次启动游戏时切换，不必手改 `module.json` 或在游戏运行时替换文件。
 - 管理器实时显示宿主、游戏线程和各模组的状态与日志。
 - 宿主代码按可读性重写，并附带不依赖游戏的自动化测试。
 
@@ -75,7 +83,7 @@ Better Endfield Next 4.0.0 暂时隐藏了第三方模块的管理入口，并�
 
 ### 当前限制
 
-- 1.0.0 已通过自动化测试和 CI 构建，**尚未经过完整的游戏内验证**。
+- 加载器和宿主已在终末地 1.6.3 实机上长期使用（EF Link 双开联机开发）。1.2 新增的崩溃记录、`efml stage` 和管理器崩溃页通过了自动化测试，**尚未在游戏内验证**。
 - EFML 本身不提供游戏功能；需要安装模组才有效果。
 - 不能与 Better-Endfield 在同一游戏进程中同时使用：两者会各自 Hook 游戏。同一时间请只使用其中一个。
 - 仅支持 Windows x64，没有 Android 版本。

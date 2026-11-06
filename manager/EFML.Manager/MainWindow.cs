@@ -38,6 +38,7 @@ public sealed class MainWindow : Window
         _navigation.Content = _host;
         _navigation.MenuItems.Add(Item("启动", "home", ""));
         _navigation.MenuItems.Add(Item("模组", "modules", ""));
+        _navigation.MenuItems.Add(Item("崩溃记录", "crashes", ""));
         _navigation.FooterMenuItems.Add(Item("关于", "about", ""));
         _navigation.SelectionChanged += (_, e) =>
         {
@@ -87,6 +88,7 @@ public sealed class MainWindow : Window
             page = tag switch
             {
                 "modules" => new ModulesPage(this),
+                "crashes" => new CrashPage(),
                 "settings" => new SettingsPage(this),
                 "about" => new AboutPage(),
                 _ => new HomePage(this)

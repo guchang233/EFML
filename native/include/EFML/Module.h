@@ -105,6 +105,25 @@ static inline int EFML_HasShutdownBarrier(const EFML_HostExtV1* ext) {
         (((const EFML_HostExtWithFeaturesV1*)ext)->feature_flags & EFML_FEATURE_SHUTDOWN_BARRIER) != 0;
 }
 
+// Since EFML 1.1: crash log steps. EFML records faulting exceptions in <data root>\crash\crash.log
+// with the stack and the EFML modules on it. crash_mark names what this module is doing now
+// (step, plus an optional detail); the latest mark of every module is written into each report.
+// Both strings are copied (step up to 63 bytes, detail up to 127); step null clears the mark.
+// Lock-free and allocation-free: cheap enough for per-frame use. context is the module's
+// host->context.
+#define EFML_FEATURE_CRASH_MARK 2u
+typedef void(BE_CALL* EFML_CrashMarkFn)(void* context, const char* step, const char* detail);
+typedef struct EFML_HostExtWithCrashMarkV1 {
+    EFML_HostExtWithFeaturesV1 base;
+    EFML_CrashMarkFn crash_mark;
+} EFML_HostExtWithCrashMarkV1;
+
+static inline EFML_CrashMarkFn EFML_GetCrashMark(const EFML_HostExtV1* ext) {
+    return ext && ext->struct_size >= sizeof(EFML_HostExtWithCrashMarkV1) &&
+        (((const EFML_HostExtWithFeaturesV1*)ext)->feature_flags & EFML_FEATURE_CRASH_MARK) != 0
+        ? ((const EFML_HostExtWithCrashMarkV1*)ext)->crash_mark : 0;
+}
+
 typedef struct EFML_HostV1 {
     BE_ThirdPartyHostV1 base;
     const EFML_HostExtV1* efml;
