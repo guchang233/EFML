@@ -4,6 +4,7 @@
 #include <ws2tcpip.h>
 #include <Windows.h>
 #include <bcrypt.h>
+#include <objbase.h>
 #include <shellapi.h>
 
 #include "../host/version.h"
@@ -26,7 +27,8 @@ using J = nlohmann::json;
 
 namespace {
 
-const wchar_t* const kRuntimeFiles[] = {L"EFML.Host.dll", L"EFML.Bootstrap.dll", L"EFML.Injector.exe", L"xinput1_4.dll"};
+const wchar_t* const kRuntimeFiles[] = {L"EFML.Host.dll", L"EFML.Bootstrap.dll", L"EFML.Launcher.exe",
+    L"EFML.Injector.exe", L"xinput1_4.dll"};
 
 std::string Utf8(const std::wstring& text) {
     if (text.empty()) return {};
@@ -464,19 +466,108 @@ int Proxy(bool install, const std::string& game_argument) {
     return 0;
 }
 
-// EFML does not start the game: Endfield 1.6.3 only accepts a start from the official launcher.
-// This makes sure the proxy is in place and tells the user how to start the game.
-int Launch(const std::string& game_argument) {
+// EFML does not build game arguments or read credentials. Two ways to start the game:
+//   --direct: EFML.Launcher.exe borrows the installed official launcher as the game's parent so the
+//             client's launcher check passes without showing the launcher UI; EFML still loads
+//             through the xinput proxy.
+//   default : only prepare the proxy and explain the official-launcher steps.
+int RunAndWait(const fs::path& executable, const std::wstring& arguments) {
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    std::wstring command = L"\"" + executable.wstring() + L"\" " + arguments;
+    if (!CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE, 0, nullptr,
+            executable.parent_path().c_str(), &startup, &process)) {
+        Fail("could not start " + Utf8(executable.filename().wstring()) + " (Win32 " + std::to_string(GetLastError()) + ")");
+    }
+    WaitForSingleObject(process.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(process.hProcess, &code);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return static_cast<int>(code);
+}
+
+int RunElevated(const fs::path& executable, const std::wstring& arguments) {
+    // ShellExecuteEx with SEE_MASK_NOASYNC performs the elevation on an STA, and the CLI never
+    // initialised COM itself, so make this thread one for the duration of the call.
+    struct Apartment {
+        HRESULT result;
+        Apartment() : result(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)) {}
+        ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); }
+    } apartment;
+    SHELLEXECUTEINFOW info{};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    info.lpVerb = L"runas";
+    info.lpFile = executable.c_str();
+    info.lpParameters = arguments.c_str();
+    info.lpDirectory = executable.parent_path().c_str();
+    info.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&info)) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_CANCELLED) {
+            std::cerr << "efml: 已取消管理员授权（UAC），游戏没有启动。 / Administrator consent was cancelled.\n";
+            return 5;
+        }
+        Fail("could not start " + Utf8(executable.filename().wstring()) + " (Win32 " + std::to_string(error) + ")");
+    }
+    if (info.hProcess) CloseHandle(info.hProcess);
+    std::cout << "已请求管理员权限并启动游戏；官方启动器界面不会出现。\n"
+                 "EFML loads through the xinput proxy once the client starts. Run `efml status` to watch it.\n";
+    return 0;
+}
+
+int Launch(const std::string& game_argument, bool direct, const std::string& parent_argument,
+    const std::string& home_argument, bool check) {
     const auto game = FindGame(game_argument);
     if (game.empty()) Fail("Endfield.exe not found; pass --game <path>");
     const auto proxy = game.parent_path() / L"xinput1_4.dll";
-    if (fs::exists(proxy) && !IsEfmlProxy(proxy)) Fail("another loader's xinput1_4.dll is in the game folder; remove it with its own tool first");
+    if (fs::exists(proxy) && !IsEfmlProxy(proxy)) {
+        Fail("another loader's xinput1_4.dll is in the game folder; remove it with its own tool first");
+    }
+    const auto runtime = InstalledRuntime();
+    fs::path helper = runtime.empty() ? fs::path() : runtime / L"EFML.Launcher.exe";
+    if (!fs::is_regular_file(helper)) {
+        // A freshly built CLI next to its runtime can still run a check before `efml setup`.
+        wchar_t self[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        const auto beside = fs::path(self).parent_path() / L"EFML.Launcher.exe";
+        if (check && fs::is_regular_file(beside)) helper = beside;
+    }
+    if (!fs::is_regular_file(helper)) {
+        Fail(runtime.empty() ? "install the runtime first: efml setup"
+                             : "EFML.Launcher.exe is missing from the runtime; run `efml setup` again");
+    }
+
+    std::wstring arguments = L"--game \"" + game.wstring() + L"\"";
+    if (!parent_argument.empty()) {
+        arguments += L" --parent \"" + fs::absolute(Wide(parent_argument)).wstring() + L"\"";
+    }
+    if (!home_argument.empty()) {
+        arguments += L" --home \"" + fs::absolute(Wide(home_argument)).wstring() + L"\"";
+    }
+    if (check) return RunAndWait(helper, arguments + L" --check");
+
+    if (!direct) {
+        if (!(fs::exists(proxy) && IsEfmlProxy(proxy))) Proxy(true, Utf8(game.wstring()));
+        IniWrite(L"Game", L"path", game.wstring());
+        std::cout << "EFML is ready. Start Endfield from the official Hypergryph launcher (click Start Game)\n"
+                     "or run `efml launch --direct` to let EFML start it for you.\n"
+                     "The proxy then loads EFML and the enabled modules. Run `efml status` to watch them.\n";
+        return 0;
+    }
+
+    // The direct launch only replaces the official launcher; EFML still needs its proxy in place.
     if (!(fs::exists(proxy) && IsEfmlProxy(proxy))) Proxy(true, Utf8(game.wstring()));
     IniWrite(L"Game", L"path", game.wstring());
-    std::cout << "EFML is ready. It does not start the game itself.\n"
-                 "Start Endfield from the official Hypergryph launcher (click Start Game);\n"
-                 "the proxy then loads EFML and the enabled modules. Run `efml status` to watch them.\n";
-    return 0;
+    const int preflight = RunAndWait(helper, arguments + L" --check");
+    if (preflight != 0) {
+        std::cerr << "efml: 官方启动器未就绪，游戏没有启动（退出码 " << preflight << "）。\n"
+                     "     Check the launcher installation or pass --parent <Games.exe>.\n";
+        return preflight;
+    }
+    return RunElevated(helper, arguments + L" --hide-console");
 }
 
 // Development switch: copy the package as <id>.dev<N> into every home and queue the switch for the
@@ -617,8 +708,10 @@ void Usage() {
         "  efml crash [--json] [--all] [--last <n>]\n"
         "                                    crash reports: fatal faults or faults with a module on the\n"
         "                                    stack (--all: every first-chance fault); --json for tools\n"
-        "  efml launch [--game <path>]       install the proxy if needed and explain how to start the game\n"
-        "                                    (EFML never starts the game; use the official launcher)\n"
+        "  efml launch [--direct] [--game <path>] [--parent <Games.exe>] [--home <dir>] [--check]\n"
+        "                                    install the proxy if needed; --direct starts the game with\n"
+        "                                    the official launcher as its parent (no launcher UI, one UAC)\n"
+        "                                    --check only reports what a launch would use\n"
         "  efml proxy install|remove [--game <path>]\n"
         "                                    xinput1_4.dll proxy: EFML loads however the game starts\n\n"
         "Data: %LOCALAPPDATA%\\EFML (override with EFML_HOME).\n";
@@ -641,6 +734,12 @@ int wmain(int argc, wchar_t** argv) {
             if (args[i] == name) return args[i + 1];
         }
         return std::string();
+    };
+    auto flag = [&](const std::string& name) {
+        for (size_t i = 1; i < args.size(); ++i) {
+            if (args[i] == name) return true;
+        }
+        return false;
     };
     const auto& command = args[0];
     try {
@@ -668,7 +767,10 @@ int wmain(int argc, wchar_t** argv) {
         if (command == "proxy" && args.size() >= 2 && (args[1] == "install" || args[1] == "remove")) {
             return Proxy(args[1] == "install", option("--game"));
         }
-        if (command == "launch") return Launch(option("--game"));
+        if (command == "launch") {
+            return Launch(option("--game"), flag("--direct"), option("--parent"), option("--home"),
+                flag("--check"));
+        }
         if (command == "stage" || command == "apply-staged") {
             std::vector<std::string> homes, positional;
             for (size_t i = 1; i < args.size(); ++i) {

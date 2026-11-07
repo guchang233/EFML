@@ -5,6 +5,8 @@ namespace EFML.Manager.Services;
 internal sealed class ManagerSettings
 {
     public string GamePath { get; set; } = "";
+    // Optional override for the official launcher used as the game's parent; empty means discover.
+    public string OfficialLauncherPath { get; set; } = "";
     public string Theme { get; set; } = "system";
     public bool FirstRunDone { get; set; }
     public bool PaneOpen { get; set; } = true;

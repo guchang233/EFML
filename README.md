@@ -4,7 +4,7 @@
 
 - **兼容 Better-Endfield 第三方模块**：包格式（`module.json` format 1 / ABI 1）、模块列表、本地 RPC 和模块页面接口都与 Better-Endfield 一致。为 Better Endfield 3.x（`BetterEndfield_GetThirdPartyModuleV1`）或 Next 4.x（`BetterEndfieldNext_GetThirdPartyModuleV1`）编译的模块无需重新编译即可加载。
 - **面向模组作者的扩展**：游戏线程任务与每帧回调、已挂接 IL2CPP 的模块工作线程、模组之间的服务、宿主事件、运行时就绪后加载及自动重试。
-- **不直接启动游戏**：终末地 1.6.3 只接受从鹰角官方启动器启动。EFML 在游戏目录放一个 `xinput1_4.dll` 代理，你用官方启动器开始游戏时，游戏会自动加载它，再由它加载已启用的模组。EFML 的「启动游戏」按钮只负责准备加载组件并告诉你怎么启动。
+- **两种启动方式**：终末地 1.6.3 只接受官方启动器创建的游戏进程——客户端会检查直接父进程的文件名、Authenticode 签名和签名证书指纹。EFML 提供 `EFML.Launcher.exe`：用一个真实的官方 `Games.exe` 暂停进程充当父进程，直接拉起游戏，启动器界面不会出现；也可以照旧从鹰角启动器开始游戏。两条路径都通过游戏目录里的 `xinput1_4.dll` 代理加载已启用的模组。直启需要一次 UAC 授权，并要求本机装有正版启动器。
 
 ## 下载与使用
 
@@ -20,17 +20,19 @@
 
 1. 首次运行时，EFML 会查找游戏并安装运行时。
 2. 在「模组」页导入模组的 `.zip`，并启用它。
-3. 在「启动」页点击「启动游戏」：EFML 会安装（或更新）加载组件，并显示启动步骤。然后打开鹰角启动器，点击「开始游戏」。页面上会实时显示游戏、宿主、游戏线程和各模组的状态，以及日志。加载组件只需安装一次，以后直接从官方启动器开始游戏同样生效。
+3. 在「启动」页点击「直接启动游戏」：EFML 会安装（或更新）加载组件，然后用官方启动器的身份拉起游戏（UAC 一次，启动器界面不出现）。也可以点「用官方启动器启动」，再在鹰角启动器里点击「开始游戏」。页面上会实时显示游戏、宿主、游戏线程和各模组的状态，以及日志。加载组件只需安装一次，以后直接从官方启动器开始游戏同样生效。
 
-EFML 不读取登录凭据，也不构造游戏启动参数；账号登录和游戏参数都由官方启动器处理。
+EFML 不读取登录凭据，也不构造游戏启动参数；账号登录仍由游戏自己完成。直启只借用本机官方启动器文件作为父进程身份，不修改游戏文件，也不修改客户端的启动校验代码。原理、命令行与排查见 [docs/OFFICIAL-LAUNCHER.md](docs/OFFICIAL-LAUNCHER.md)。
 
 模组、日志和设置保存在 `%LOCALAPPDATA%\EFML`；设置环境变量 `EFML_HOME` 可以改用其他目录。卸载 EFML 时会保留这个目录，并移除 EFML 放入游戏目录的代理文件。
 
-也可以用命令行工具 `runtime\efml.exe` 完成同样的操作，例如 `efml status`、`efml add <模组.zip>`、`efml launch`、`efml logs`。运行 `efml help` 查看全部命令。
+也可以用命令行工具 `runtime\efml.exe` 完成同样的操作，例如 `efml status`、`efml add <模组.zip>`、`efml launch --direct`、`efml logs`。运行 `efml help` 查看全部命令。
 
 ```powershell
-# 安装加载组件（代理）并显示启动步骤；不会启动游戏
-runtime\efml.exe launch
+# 安装加载组件（代理）并直接启动游戏；UAC 一次，官方启动器界面不会出现
+runtime\efml.exe launch --direct
+# 只报告直启会用到哪些路径，不启动、不提权
+runtime\efml.exe launch --check
 # 游戏中也可导入并启用一个新模块身份，无需重新启动官方启动器
 runtime\efml.exe add --dev "D:\MyMod\package"
 runtime\efml.exe enable my.mod
@@ -47,7 +49,7 @@ runtime\efml.exe stage "D:\MyMod\package" --home "$env:LOCALAPPDATA\EFML" --home
 
 ## 与 Better-Endfield 的关系
 
-EFML 的加载器、宿主和模块接口提取自 Better-Endfield（基于 Better Endfield Next 4.0.0），按 AGPL-3.0 使用，并在派生的源文件中注明出处。两者的定位不同：
+EFML 的加载器、宿主和模块接口提取自 Better-Endfield（基于 Better Endfield Next 4.0.0），按 AGPL-3.0 使用，并在派生的源文件中注明出处。1.3 的直启桥（`native/loader/official_launcher.*` 与 `EFML.Launcher.exe`）取自 Better Endfield Next 4.1.4 的 `official_launcher.cpp` 和 `Launcher.exe`，另补上了真实的 Authenticode 校验。两者的定位不同：
 
 - **Better-Endfield** 是功能完整的增强工具，内置相机、自定义模型、语音、音乐、战斗数据等功能，并提供 Android 版本和模组下载站。
 - **EFML** 只做模组加载这一件事，作为其他模组（例如 EndCraft、EF Link）共同依赖的基础。
@@ -84,11 +86,14 @@ Better Endfield Next 4.0.0 暂时隐藏了第三方模块的管理入口，并�
 ### 当前限制
 
 - 加载器和宿主已在终末地 1.6.3 实机上长期使用（EF Link 双开联机开发）。1.2 新增的崩溃记录、`efml stage` 和管理器崩溃页通过了自动化测试，**尚未在游戏内验证**。
+- 直启（`EFML.Launcher.exe`）来自 Better-Endfield 4.0.3 起的官方启动器父进程方案，并补上了它文档声称但代码未做的签名校验；本仓库的自动化测试不启动游戏，**首次真机直启需要你点一次 UAC 验收**。
+- 直启依赖本机正版鹰角启动器文件。启动器升级、证书或目录变化时，EFML 会明确报错而不是换用其他文件。
+- 每次直启都会请求管理员权限；EFML 管理器本身不常驻管理员。
 - EFML 本身不提供游戏功能；需要安装模组才有效果。
 - 不能与 Better-Endfield 在同一游戏进程中同时使用：两者会各自 Hook 游戏。同一时间请只使用其中一个。
 - 仅支持 Windows x64，没有 Android 版本。
 - 模组接口沿用 Better-Endfield 第三方 ABI v1。如果 Better-Endfield 将来推出新版接口，EFML 会评估是否跟进。
-- 与所有注入类工具一样，游戏更新可能导致帧来源或方法解析失效；使用模组可能违反游戏服务条款并导致账号受限。EFML 不会关闭或绕过反作弊。
+- 与所有注入类工具一样，游戏更新可能导致帧来源或方法解析失效；使用模组可能违反游戏服务条款并导致账号受限。直启借用官方启动器的父进程身份，没有修改客户端文件或校验代码；EFML 不关闭、不修改反作弊。
 
 ## 开发模组
 
@@ -101,7 +106,7 @@ Better Endfield Next 4.0.0 暂时隐藏了第三方模块的管理入口，并�
 | `native/include/EFML/` | 公开 SDK 头文件（`Module.h`、`ModuleApi.h`、`HookChain.h`） |
 | `native/include/BetterEndfield*/` | 兼容 Better-Endfield 源码的头文件 |
 | `native/host/` | `EFML.Host.dll`：模块宿主、RPC、Hook 管理、IL2CPP 解析、游戏线程 |
-| `native/loader/` | `xinput1_4.dll` 代理（`EFML.Bootstrap.dll`、`EFML.Injector.exe` 是旧版注入组件，管理器和命令行已不再使用） |
+| `native/loader/` | `xinput1_4.dll` 代理、`EFML.Launcher.exe`（官方启动器父进程桥）、`EFML.Bootstrap.dll` 与 `EFML.Injector.exe`（无代理时的注入通道，命令行可用） |
 | `native/cli/` | 命令行工具 `efml.exe` |
 | `native/tests/` | 宿主测试（不需要游戏） |
 | `manager/EFML.Manager/` | 管理器（C# / WinUI 3） |

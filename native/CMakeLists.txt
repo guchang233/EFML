@@ -45,12 +45,18 @@ target_compile_definitions(EFML.XInputProxy PRIVATE EFML_XINPUT_PROXY)
 set_target_properties(EFML.XInputProxy PROPERTIES OUTPUT_NAME xinput1_4 PREFIX ""
     RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
 
-add_executable(EFML.Injector loader/injector.cpp loader/injector.rc)
+add_executable(EFML.Launcher loader/launcher.cpp loader/official_launcher.cpp loader/launcher.rc)
+target_link_options(EFML.Launcher PRIVATE /MANIFEST:NO)
+target_link_libraries(EFML.Launcher PRIVATE advapi32 user32 shell32 crypt32 wintrust)
+set_target_properties(EFML.Launcher PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
+
+add_executable(EFML.Injector loader/injector.cpp loader/official_launcher.cpp loader/injector.rc)
 target_link_options(EFML.Injector PRIVATE /MANIFEST:NO)
+target_link_libraries(EFML.Injector PRIVATE advapi32 user32 shell32 crypt32 wintrust)
 set_target_properties(EFML.Injector PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
 
 add_executable(efml cli/efml.cpp)
-target_link_libraries(efml PRIVATE ws2_32 bcrypt shell32 advapi32)
+target_link_libraries(efml PRIVATE ws2_32 bcrypt shell32 ole32 advapi32)
 set_target_properties(efml PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/runtime)
 
 # SDK example and tests.
@@ -82,3 +88,8 @@ add_test(NAME efml-crash-reporter COMMAND efml-crash-tests)
 add_executable(efml-stage-tests tests/dev_stage_test.cpp)
 set_target_properties(efml-stage-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/tests)
 add_test(NAME efml-dev-stage COMMAND efml-stage-tests)
+add_executable(efml-launcher-tests tests/official_launcher_test.cpp loader/official_launcher.cpp)
+target_include_directories(efml-launcher-tests PRIVATE loader)
+target_link_libraries(efml-launcher-tests PRIVATE advapi32 user32 shell32 crypt32 wintrust)
+set_target_properties(efml-launcher-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${EFML_STAGE}/tests)
+add_test(NAME efml-launcher-bridge COMMAND efml-launcher-tests)

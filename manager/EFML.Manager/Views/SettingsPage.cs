@@ -10,6 +10,12 @@ internal sealed class SettingsPage : UserControl
 {
     private readonly MainWindow _window;
     private readonly TextBox _gamePath = new() { PlaceholderText = @"例如 D:\Arknights Endfield\Endfield.exe", MinWidth = 420 };
+    private readonly TextBox _launcherPath = new()
+    {
+        PlaceholderText = @"留空 = 自动查找（例如 E:\Program Files\Hypergryph Launcher\1.6.0\Games.exe）",
+        MinWidth = 420
+    };
+    private readonly TextBlock _launcherStatus = Ui.Hint("");
     private readonly TextBlock _proxyStatus = Ui.Text("");
     private readonly Button _proxyInstall;
     private readonly Button _proxyRemove;
@@ -25,6 +31,7 @@ internal sealed class SettingsPage : UserControl
         _proxyRemove = Ui.Button("从游戏目录移除代理", async () => await ProxyActionAsync(false));
 
         _gamePath.LostFocus += (_, _) => Save();
+        _launcherPath.LostFocus += (_, _) => Save();
         foreach (var (text, tag) in new[] { ("跟随系统", "system"), ("浅色", "light"), ("深色", "dark") })
             _theme.Items.Add(new ComboBoxItem { Content = text, Tag = tag });
         _theme.SelectionChanged += (_, _) => Save();
@@ -41,9 +48,25 @@ internal sealed class SettingsPage : UserControl
                 })),
             Ui.Hint("EFML 会在注册表与常见安装位置中查找终末地。")));
 
+        var launcher = Ui.Card(Ui.Column(10,
+            Ui.Text("官方启动器（直接启动用）", 16),
+            Ui.Hint("「直接启动游戏」会用一个真实的官方 Games.exe 暂停进程作为游戏的父进程，所以不需要打开启动器界面；" +
+                    "游戏仍然通过代理加载 EFML。留空表示自动查找。"),
+            Ui.Row(_launcherPath,
+                Ui.Button("浏览…", async () => await BrowseLauncherAsync()),
+                Ui.Button("自动查找", () =>
+                {
+                    LauncherDiscovery.Result found = LauncherDiscovery.Inspect("");
+                    if (found.Found) { _launcherPath.Text = found.Path; Save(); }
+                    else Ui.Show(_message, found.Problem, InfoBarSeverity.Warning);
+                }),
+                Ui.Button("检查", () => UpdateLauncherStatus(true))),
+            _launcherStatus));
+
         var mode = Ui.Card(Ui.Column(10,
             Ui.Text("加载组件（xinput1_4.dll 代理）", 16),
-            Ui.Hint("EFML 不直接启动游戏。代理装在游戏目录里：从鹰角官方启动器开始游戏时，游戏会自动加载它，再由它加载已启用的模组。安装一次即可。"),
+            Ui.Hint("代理装在游戏目录里：游戏启动时自动加载它，再由它加载已启用的模组。安装一次即可；" +
+                    "直启和官方启动器两条路径都走它。"),
             Ui.Text("代理状态", 14),
             _proxyStatus,
             Ui.Row(_proxyInstall, _proxyRemove)));
@@ -70,7 +93,7 @@ internal sealed class SettingsPage : UserControl
                 Ui.Button("打开数据目录", () => Shell.OpenFolder(AppPaths.DataRoot))),
             Ui.Hint("模组、日志和配置都在数据目录中；卸载 EFML 不会删除它们。设置环境变量 EFML_HOME 可以改用其他目录。")));
 
-        Content = Ui.Page(Ui.Column(16, Ui.Title("设置"), _message, game, mode, look, runtime));
+        Content = Ui.Page(Ui.Column(16, Ui.Title("设置"), _message, game, launcher, mode, look, runtime));
         Loaded += async (_, _) => await RefreshAsync();
     }
 
@@ -79,6 +102,7 @@ internal sealed class SettingsPage : UserControl
         _loading = true;
         var settings = _window.Settings;
         _gamePath.Text = settings.GamePath;
+        _launcherPath.Text = settings.OfficialLauncherPath;
         _theme.SelectedIndex = settings.Theme switch { "light" => 1, "dark" => 2, _ => 0 };
         _loading = false;
 
@@ -89,6 +113,7 @@ internal sealed class SettingsPage : UserControl
         _proxyInstall.Content = proxy.State == ProxyState.UpdateAvailable ? "更新代理" : "安装代理到游戏目录";
         _proxyInstall.IsEnabled = proxy.CanInstall;
         _proxyRemove.IsEnabled = proxy.CanUninstall;
+        UpdateLauncherStatus(false);
     }
 
     private void Save()
@@ -96,6 +121,7 @@ internal sealed class SettingsPage : UserControl
         if (_loading) return;
         var settings = _window.Settings;
         settings.GamePath = _gamePath.Text.Trim().Trim('"');
+        settings.OfficialLauncherPath = _launcherPath.Text.Trim().Trim('"');
         settings.Theme = (_theme.SelectedItem as ComboBoxItem)?.Tag as string ?? "system";
         try
         {
@@ -109,6 +135,26 @@ internal sealed class SettingsPage : UserControl
         if (settings.GamePath.Length > 0 && !GameDiscovery.IsGameExecutable(settings.GamePath))
             Ui.Show(_message, "这个路径不是 Endfield.exe。", InfoBarSeverity.Warning);
         _ = RefreshProxyAsync();
+        UpdateLauncherStatus(false);
+    }
+
+    private void UpdateLauncherStatus(bool announce)
+    {
+        LauncherDiscovery.Result result = LauncherDiscovery.Inspect(_window.Settings.OfficialLauncherPath);
+        if (!result.Found)
+        {
+            _launcherStatus.Text = result.Problem;
+            if (announce) Ui.Show(_message, result.Problem, InfoBarSeverity.Warning);
+            return;
+        }
+        string text = $"已找到：{result.Path}\n版本 {result.Version} · 签名者 {result.Publisher}";
+        if (result.Problem.Length > 0) text += "\n⚠ " + result.Problem;
+        _launcherStatus.Text = text;
+        if (announce)
+        {
+            Ui.Show(_message, result.Problem.Length > 0 ? result.Problem : "官方启动器可用。",
+                result.Problem.Length > 0 ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
+        }
     }
 
     private async Task RefreshProxyAsync()
@@ -121,13 +167,27 @@ internal sealed class SettingsPage : UserControl
 
     private async Task BrowseAsync()
     {
+        string? path = await PickExecutableAsync();
+        if (path is null) return;
+        _gamePath.Text = path;
+        Save();
+    }
+
+    private async Task BrowseLauncherAsync()
+    {
+        string? path = await PickExecutableAsync();
+        if (path is null) return;
+        _launcherPath.Text = path;
+        Save();
+    }
+
+    private async Task<string?> PickExecutableAsync()
+    {
         var picker = new FileOpenPicker();
         picker.FileTypeFilter.Add(".exe");
         InitializeWithWindow.Initialize(picker, WindowNative.GetWindowHandle(_window));
         var file = await picker.PickSingleFileAsync();
-        if (file is null) return;
-        _gamePath.Text = file.Path;
-        Save();
+        return file?.Path;
     }
 
     private async Task ProxyActionAsync(bool install)

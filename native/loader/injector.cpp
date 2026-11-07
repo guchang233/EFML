@@ -1,9 +1,12 @@
 // Derived from Better-Endfield's injector (https://github.com/Dr-hydra/Better-Endfield), AGPL-3.0.
+// EFML adds the official-launcher parent bridge: the client rejects a game whose direct parent is
+// not the signed official Games.exe, so both modes start through EFML::Loader::Launch.
 #include <Windows.h>
 #include <TlHelp32.h>
 
 #include "../host/bootstrap_config.h"
 #include "loader_config.h"
+#include "official_launcher.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,6 +15,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -509,16 +513,60 @@ bool WaitForModule(DWORD process_id, const wchar_t* module_name,
 
 } // namespace
 
+namespace {
+
+// Ends the process this invocation created unless it reached the running state; after a successful
+// start it only closes the handles. A running game is never terminated here.
+class OwnedGame {
+public:
+    explicit OwnedGame(const PROCESS_INFORMATION& process) noexcept
+        : process_(process.hProcess), thread_(process.hThread), pid_(process.dwProcessId) {}
+    OwnedGame(const OwnedGame&) = delete;
+    OwnedGame& operator=(const OwnedGame&) = delete;
+    ~OwnedGame() {
+        if (!started_ && process_ && WaitForSingleObject(process_, 0) == WAIT_TIMEOUT) {
+            TerminateProcess(process_, 1);
+            WaitForSingleObject(process_, 5000);
+        }
+        if (thread_) CloseHandle(thread_);
+        if (process_) CloseHandle(process_);
+    }
+    bool Resume() {
+        if (!thread_ || ResumeThread(thread_) == static_cast<DWORD>(-1)) return false;
+        CloseHandle(thread_);
+        thread_ = nullptr;
+        return true;
+    }
+    // Injection succeeded: the game may keep running even if a later step fails.
+    void Complete() noexcept { started_ = true; }
+    HANDLE process() const noexcept { return process_; }
+    DWORD pid() const noexcept { return pid_; }
+private:
+    HANDLE process_;
+    HANDLE thread_;
+    DWORD pid_;
+    bool started_ = false;
+};
+
+} // namespace
+
 // Usage: EFML.Injector.exe --game <Endfield.exe> [--data-root <dir>] [--host <EFML.Host.dll>]
+//                          [--parent <Games.exe>] [--no-parent]
 //                          [--manual-map | --manual-map-late] [--force] [-- game arguments]
-// Exit codes: 0 started, 2 usage, 3 runtime files missing, 4 game did not start,
-// 5 injection failed, 6 a foreign xinput1_4.dll is in the game folder (use --force to ignore).
+// Borrows the installed official launcher as the game's direct parent (the client's launch check
+// rejects anything else), injects EFML.Bootstrap.dll or maps EFML.Host.dll, then waits for the game
+// so the borrowed suspended parent can be cleaned up.
+// Exit codes: the game's exit code, 2 usage, 3 runtime files missing, 4 game did not start,
+// 5 injection failed, 6 a foreign xinput1_4.dll is in the game folder (use --force to ignore),
+// 7 no official launcher found.
 int wmain(int argc, wchar_t* argv[]) {
-    std::filesystem::path game_path, data_root, host_path;
+    namespace launch = EFML::Loader::Launch;
+    std::filesystem::path game_path, data_root, host_path, parent_path;
     std::vector<std::wstring> game_arguments;
     bool manual_map = false;
     bool late_manual_map = false;
     bool force = false;
+    bool no_parent = false;
     for (int index = 1; index < argc; ++index) {
         const std::wstring_view argument(argv[index]);
         if (argument == L"--game" && index + 1 < argc) {
@@ -527,6 +575,10 @@ int wmain(int argc, wchar_t* argv[]) {
             data_root = argv[++index];
         } else if (argument == L"--host" && index + 1 < argc) {
             host_path = argv[++index];
+        } else if (argument == L"--parent" && index + 1 < argc) {
+            parent_path = argv[++index];
+        } else if (argument == L"--no-parent") {
+            no_parent = true;
         } else if (argument == L"--manual-map") {
             manual_map = true;
         } else if (argument == L"--manual-map-late") {
@@ -543,7 +595,8 @@ int wmain(int argc, wchar_t* argv[]) {
     if (game_path.empty() || !std::filesystem::is_regular_file(game_path) ||
         (manual_map && late_manual_map)) {
         std::wcerr << L"Usage: EFML.Injector.exe --game <Endfield.exe> [--data-root <dir>] "
-                      L"[--host <EFML.Host.dll>] [--manual-map | --manual-map-late] [--force] [-- args]\n";
+                      L"[--host <EFML.Host.dll>] [--parent <Games.exe>] [--no-parent] "
+                      L"[--manual-map | --manual-map-late] [--force] [-- args]\n";
         return 2;
     }
 
@@ -584,85 +637,87 @@ int wmain(int argc, wchar_t* argv[]) {
         }
     }
 
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
+    launch::VerifiedLauncher launcher;
+    launch::OfficialParent parent;
     PROCESS_INFORMATION process{};
-    std::wstring command_line = L"\"" + game_path.wstring() + L"\"";
-    for (const auto& argument : game_arguments) {
-        command_line += L" \"";
-        for (const wchar_t character : argument) {
-            if (character == L'\"') {
-                command_line += L'\\';
-            }
-            command_line += character;
+    std::wstring start_error;
+    if (no_parent) {
+        if (!launch::CreateGameProcess(game_path, game_arguments, CREATE_SUSPENDED, process, start_error)) {
+            std::wcerr << start_error << L"\n";
+            return 4;
         }
-        command_line += L"\"";
+    } else {
+        if (!launch::FindOfficialLauncher(parent_path, launcher, start_error)) {
+            std::wcerr << start_error << L"\n";
+            return 7;
+        }
+        if (!parent.Start(launcher, start_error)) {
+            std::wcerr << start_error << L"\n";
+            return 4;
+        }
+        // The parent image and its signature are established; let the official updater touch it.
+        launcher.file.reset();
+        if (!parent.CreateGame(game_path, game_arguments, CREATE_SUSPENDED, process, start_error)) {
+            std::wcerr << start_error << L"\n";
+            return 4;
+        }
     }
-    if (!CreateProcessW(game_path.c_str(), command_line.data(), nullptr, nullptr, FALSE,
-            CREATE_SUSPENDED, nullptr, game_path.parent_path().c_str(), &startup,
-            &process)) {
-        PrintLastError(L"Unable to start Endfield");
-        return 4;
-    }
-    std::wcout << L"pid=" << process.dwProcessId << L"\n";
-    EFML::Loader::LoaderLog(data_root, "injector started the game, pid " + std::to_string(process.dwProcessId));
+    OwnedGame game(process);
+    std::wcout << L"pid=" << game.pid() << L"\n";
+    EFML::Loader::LoaderLog(data_root, "injector started the game, pid " + std::to_string(game.pid()) +
+        (no_parent ? " (no parent)" : " with the official launcher as parent"));
 
+    bool injected = proxy_loads_host;
     if (proxy_loads_host) {
-        ResumeThread(process.hThread);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        std::wcout << L"EFML xinput proxy present; the game loads EFML by itself.\n";
-        return 0;
-    }
-
-    bool injected = false;
-    if (manual_map) {
+        if (!game.Resume()) {
+            PrintLastError(L"Unable to resume Endfield");
+            return 5;
+        }
+    } else if (manual_map) {
+        const EFML_BootstrapConfigV1 bootstrap = BuildBootstrapConfig(data_root);
+        injected = ManualMapHost(process.hProcess, host_path, bootstrap);
+        if (!injected) {
+            std::wcerr << L"Unable to map the EFML Host.\n";
+            return 5;
+        }
+        if (!game.Resume()) {
+            PrintLastError(L"Unable to resume Endfield after Host mapping");
+            return 5;
+        }
+    } else if (late_manual_map) {
+        if (!game.Resume()) {
+            PrintLastError(L"Unable to resume Endfield");
+            return 5;
+        }
+        if (!WaitForModule(game.pid(), L"GameAssembly.dll", 90000)) {
+            std::wcerr << L"GameAssembly.dll was not observed before timeout.\n";
+            return 5;
+        }
+        // Give Unity's native runtime and the GC a short settling window before starting a
+        // manually mapped Host thread.
+        Sleep(3000);
         const EFML_BootstrapConfigV1 bootstrap = BuildBootstrapConfig(data_root);
         injected = ManualMapHost(process.hProcess, host_path, bootstrap);
     } else {
-        if (ResumeThread(process.hThread) == static_cast<DWORD>(-1)) {
+        if (!game.Resume()) {
             PrintLastError(L"Unable to resume Endfield");
-            TerminateProcess(process.hProcess, 1);
-            CloseHandle(process.hThread);
-            CloseHandle(process.hProcess);
             return 5;
         }
-        if (late_manual_map) {
-            if (!WaitForModule(process.dwProcessId, L"GameAssembly.dll", 90000)) {
-                std::wcerr << L"GameAssembly.dll was not observed before timeout.\n";
-                TerminateProcess(process.hProcess, 1);
-                CloseHandle(process.hThread);
-                CloseHandle(process.hProcess);
-                return 5;
-            }
-            // Give Unity's native runtime and the GC a short settling window
-            // before starting a manually mapped Host thread.
-            Sleep(3000);
-            const EFML_BootstrapConfigV1 bootstrap = BuildBootstrapConfig(data_root);
-            injected = ManualMapHost(process.hProcess, host_path, bootstrap);
-        } else {
-            injected = LoadBootstrapWithRemoteThread(process.hProcess,
-                process.dwProcessId, bootstrap_path);
-        }
+        injected = LoadBootstrapWithRemoteThread(process.hProcess, game.pid(), bootstrap_path);
     }
 
     if (!injected) {
-        TerminateProcess(process.hProcess, 1);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
         std::wcerr << L"Unable to load the EFML Host.\n";
         return 5;
     }
+    game.Complete();
 
-    if (manual_map && ResumeThread(process.hThread) == static_cast<DWORD>(-1)) {
-        PrintLastError(L"Unable to resume Endfield after Host mapping");
-        TerminateProcess(process.hProcess, 1);
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-        return 5;
+    DWORD exit_code = 0;
+    std::wstring wait_error;
+    if (!launch::WaitForGame(game.process(), exit_code, wait_error)) {
+        std::wcerr << wait_error << L"\n";
+        return 8;
     }
-
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    return 0;
+    EFML::Loader::LoaderLog(data_root, "game exited with " + std::to_string(exit_code));
+    return static_cast<int>(exit_code);
 }

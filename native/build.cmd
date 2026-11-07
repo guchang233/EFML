@@ -1,6 +1,6 @@
 @echo off
 rem Builds the EFML runtime with MSVC (no CMake needed) and runs the native tests.
-rem Output: build\native\{efml.exe, EFML.Host.dll, EFML.Bootstrap.dll, xinput1_4.dll, EFML.Injector.exe, efml-tests.exe}
+rem Output: build\native\{efml.exe, EFML.Host.dll, EFML.Bootstrap.dll, xinput1_4.dll, EFML.Launcher.exe, EFML.Injector.exe, efml-tests.exe}
 setlocal
 cd /d "%~dp0.."
 for /f "usebackq tokens=*" %%I in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "EFML_VS=%%I"
@@ -37,11 +37,15 @@ cl %CPP% /DEFML_XINPUT_PROXY /LD native\loader\input_proxy.cpp /Fo"%OBJ%\loader\
 if errorlevel 1 exit /b 1
 rc /nologo /fo "%OBJ%\loader\injector.res" native\loader\injector.rc
 if errorlevel 1 exit /b 1
-cl %CPP% native\loader\injector.cpp "%OBJ%\loader\injector.res" /Fo"%OBJ%\loader\injector.obj" /Fd"%OBJ%\loader\injector.pdb" /Fe"%OUT%\EFML.Injector.exe" /link %LINKSAFE% /MANIFEST:NO >nul
+rc /nologo /fo "%OBJ%\loader\launcher.res" native\loader\launcher.rc
+if errorlevel 1 exit /b 1
+cl %CPP% native\loader\injector.cpp native\loader\official_launcher.cpp "%OBJ%\loader\injector.res" /Fo"%OBJ%\loader\\" /Fd"%OBJ%\loader\\" /Fe"%OUT%\EFML.Injector.exe" /link %LINKSAFE% /MANIFEST:NO advapi32.lib user32.lib shell32.lib crypt32.lib wintrust.lib >nul
+if errorlevel 1 exit /b 1
+cl %CPP% native\loader\launcher.cpp native\loader\official_launcher.cpp "%OBJ%\loader\launcher.res" /Fo"%OBJ%\loader\\" /Fd"%OBJ%\loader\\" /Fe"%OUT%\EFML.Launcher.exe" /link %LINKSAFE% /MANIFEST:NO advapi32.lib user32.lib shell32.lib crypt32.lib wintrust.lib >nul
 if errorlevel 1 exit /b 1
 
 echo [4/5] efml.exe and the Echo example module
-cl %CPP% native\cli\efml.cpp /Fo"%OBJ%\loader\efml.obj" /Fd"%OBJ%\loader\efml.pdb" /Fe"%OUT%\efml.exe" /link %LINKSAFE% ws2_32.lib bcrypt.lib shell32.lib advapi32.lib >nul
+cl %CPP% native\cli\efml.cpp /Fo"%OBJ%\loader\efml.obj" /Fd"%OBJ%\loader\efml.pdb" /Fe"%OUT%\efml.exe" /link %LINKSAFE% ws2_32.lib bcrypt.lib shell32.lib ole32.lib advapi32.lib >nul
 if errorlevel 1 exit /b 1
 if not exist "%OUT%\echo" mkdir "%OUT%\echo"
 cl %CPP% /LD /Inative\include sdk\examples\echo\native\echo.cpp /Fo"%OBJ%\tests\echo.obj" /Fd"%OBJ%\tests\echo.pdb" /Fe"%OUT%\echo\example.echo.dll" /link %LINKSAFE% >nul
@@ -62,4 +66,8 @@ if errorlevel 1 exit /b 1
 "%OUT%\efml-tests.exe" "%OUT%\echo\example.echo.dll" "%OUT%\test.legacy.dll"
 if errorlevel 1 exit /b 1
 "%OUT%\efml-stage-tests.exe"
+if errorlevel 1 exit /b 1
+cl %CPP% native\tests\official_launcher_test.cpp native\loader\official_launcher.cpp /Fo"%OBJ%\tests\\" /Fd"%OBJ%\tests\\" /Fe"%OUT%\efml-launcher-tests.exe" /link advapi32.lib user32.lib shell32.lib crypt32.lib wintrust.lib >nul
+if errorlevel 1 exit /b 1
+"%OUT%\efml-launcher-tests.exe"
 exit /b %errorlevel%

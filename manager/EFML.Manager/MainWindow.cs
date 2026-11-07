@@ -148,7 +148,7 @@ public sealed class MainWindow : Window
                 Title = "欢迎使用 EFML",
                 Content = Ui.Column(12,
                     Ui.Text(GameDiscovery.IsGameExecutable(Settings.GamePath) ? "已找到游戏：" + Settings.GamePath : "没有自动找到游戏，稍后可以在「设置」中选择 Endfield.exe。"),
-                    Ui.Text("EFML 不直接启动游戏：先在「模组」里安装并启用模组，再到「启动」页点击「启动游戏」，EFML 会准备好加载组件，然后请用鹰角官方启动器开始游戏，模组会自动加载。")),
+                    Ui.Text("先在「模组」里安装并启用模组，再到「启动」页点「直接启动游戏」：EFML 会借用本机官方启动器拉起游戏，启动器界面不会出现（需要一次管理员授权）。也可以点「用官方启动器启动」。")),
                 PrimaryButtonText = "开始使用",
                 DefaultButton = ContentDialogButton.Primary
             };

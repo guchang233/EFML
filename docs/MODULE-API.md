@@ -211,7 +211,7 @@ const status = await host.status();    // { connected, module }
 
 1. 编译 DLL，按上面的结构准备一个文件夹。
 2. 注册开发文件夹，EFML 直接从该文件夹加载、不复制：在管理器里点「开发：注册文件夹」，或执行 `efml add --dev <文件夹>`。
-3. 在 EFML 里点「启动游戏」准备加载组件，再用鹰角官方启动器开始游戏（EFML 不直接启动游戏）。查看日志：管理器「启动」页，`efml logs <id>`，或 `%LOCALAPPDATA%\EFML\logs\EFML.log`。
+3. 在 EFML 里点「直接启动游戏」：EFML 会用官方启动器的身份拉起游戏并加载组件（UAC 一次，启动器界面不出现）；也可以点「用官方启动器启动」，再到鹰角启动器里开始游戏。查看日志：管理器「启动」页，`efml logs <id>`，或 `%LOCALAPPDATA%\EFML\logs\EFML.log`。
 4. 不开页面也能给模组发消息：`efml send <id> "{\"action\":\"ping\"}"`。
 5. 已加载的 DLL 不会被替换：改动后用新的模块身份注册开发文件夹（`efml add --dev`），游戏正在运行时也会立即尝试加载；沿用同一个身份则需要重启游戏。日常换版建议用下面的 `efml stage`。
 6. 发布时把文件夹内容打成 ZIP（`module.json` 必须在 ZIP 根目录）。

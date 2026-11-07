@@ -8,8 +8,9 @@ using System.Text.Json.Nodes;
 
 namespace EFML.Manager.Views;
 
-// Launch page: one button that prepares EFML and explains how to start the game from the official
-// launcher, live state of the game, the Host and the modules, and the Host / loader logs.
+// Launch page: start the game directly (the official launcher's identity without its UI), or prepare
+// the proxy and guide the user through the official launcher. Live state of the game, the Host, the
+// modules and the Host / loader logs.
 internal sealed class HomePage : UserControl
 {
     private readonly MainWindow _window;
@@ -18,6 +19,7 @@ internal sealed class HomePage : UserControl
     private readonly Ui.Tile _thread = new("游戏线程");
     private readonly Ui.Tile _modules = new("模组");
     private readonly Button _launch = new() { MinWidth = 180, Height = 44 };
+    private readonly Button _official = new() { Height = 44 };
     private readonly TextBlock _mode = Ui.Hint("");
     private readonly TextBlock _gamePath = Ui.Hint("");
     private readonly InfoBar _message = new() { IsClosable = true };
@@ -36,8 +38,10 @@ internal sealed class HomePage : UserControl
     {
         _window = window;
         _launch.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-        _launch.Content = new TextBlock { Text = "启动游戏", FontSize = 16, FontWeight = FontWeights.SemiBold };
+        _launch.Content = new TextBlock { Text = "直接启动游戏", FontSize = 16, FontWeight = FontWeights.SemiBold };
         _launch.Click += async (_, _) => await LaunchAsync();
+        _official.Content = "用官方启动器启动";
+        _official.Click += async (_, _) => await GuideAsync();
         ScrollViewer.SetHorizontalScrollBarVisibility(_log, ScrollBarVisibility.Auto);
         ScrollViewer.SetVerticalScrollBarVisibility(_log, ScrollBarVisibility.Auto);
 
@@ -52,11 +56,12 @@ internal sealed class HomePage : UserControl
         var launchGrid = new Grid { ColumnSpacing = 16 };
         launchGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         launchGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var launchText = Ui.Column(4, Ui.Text("通过官方启动器启动终末地", 16), _mode, _gamePath);
+        var launchText = Ui.Column(4, Ui.Text("启动终末地", 16), _mode, _gamePath);
         launchGrid.Children.Add(launchText);
-        Grid.SetColumn(_launch, 1);
-        _launch.VerticalAlignment = VerticalAlignment.Center;
-        launchGrid.Children.Add(_launch);
+        var launchButtons = Ui.Row(_launch, _official);
+        launchButtons.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(launchButtons, 1);
+        launchGrid.Children.Add(launchButtons);
 
         _logSource.Items.Add(new ComboBoxItem { Content = "宿主日志（EFML.log）", Tag = "host" });
         _logSource.Items.Add(new ComboBoxItem { Content = "加载器日志（loader.log）", Tag = "loader" });
@@ -73,7 +78,7 @@ internal sealed class HomePage : UserControl
 
         Content = Ui.Page(Ui.Column(16,
             Ui.Title("启动"),
-            Ui.Hint("EFML 在游戏启动时加载。先在「模组」里安装并启用模组，再点「启动游戏」查看启动步骤。"),
+            Ui.Hint("EFML 在游戏启动时加载。先在「模组」里安装并启用模组，再启动游戏：直接启动不需要打开鹰角启动器。"),
             tiles,
             Ui.Card(launchGrid, 20),
             _message,
@@ -85,11 +90,40 @@ internal sealed class HomePage : UserControl
         Unloaded += (_, _) => _timer.Stop();
     }
 
+    // Direct launch: EFML.Launcher.exe starts Endfield.exe with the installed official launcher as
+    // its parent. The launcher UI never appears; EFML still loads through the proxy.
     private async Task LaunchAsync()
     {
         if (_launching) return;
         _launching = true;
         _launch.IsEnabled = false;
+        _official.IsEnabled = false;
+        Ui.Show(_message, "正在准备运行时和加载组件…", InfoBarSeverity.Informational);
+        try
+        {
+            LaunchService.LaunchResult result = await LaunchService.LaunchDirectAsync(_window.Settings);
+            Ui.Show(_message, result.Message,
+                result.Started ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        }
+        catch (Exception exception)
+        {
+            Ui.Show(_message, exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _launching = false;
+            await RefreshAsync();
+        }
+    }
+
+    // Guided launch: make sure the runtime and the proxy are in place, then let the user click Start
+    // Game in the official launcher.
+    private async Task GuideAsync()
+    {
+        if (_launching) return;
+        _launching = true;
+        _launch.IsEnabled = false;
+        _official.IsEnabled = false;
         Ui.Show(_message, "正在准备加载组件…", InfoBarSeverity.Informational);
         try
         {
@@ -104,12 +138,10 @@ internal sealed class HomePage : UserControl
         finally
         {
             _launching = false;
-            _launch.IsEnabled = true;
             await RefreshAsync();
         }
     }
 
-    // EFML never starts the game itself: Endfield 1.6.3 only accepts a start from the official launcher.
     private async Task ShowGuideAsync()
     {
         bool running = LaunchService.GameRunning();
@@ -118,14 +150,14 @@ internal sealed class HomePage : UserControl
             XamlRoot = XamlRoot,
             Title = "请用官方启动器启动游戏",
             Content = Ui.Column(10,
-                Ui.Text("EFML 的加载组件已就绪。终末地 1.6.3 只接受从鹰角官方启动器启动，所以 EFML 不直接启动游戏。"),
+                Ui.Text("EFML 的加载组件已就绪。接下来由鹰角官方启动器创建游戏进程。"),
                 Ui.Text(running
                     ? "检测到游戏正在运行：它不是用已就绪的组件启动的。请先关闭游戏，再按下面的步骤重新开始。"
                     : "接下来："),
                 Ui.Text("1. 打开鹰角启动器（桌面或开始菜单里的快捷方式）。"),
                 Ui.Text("2. 在启动器中点击「开始游戏」。"),
                 Ui.Text("3. 回到 EFML 的这个页面：游戏、宿主、游戏线程和模组的状态会在进入游戏后依次变为运行中。"),
-                Ui.Hint("加载组件只需安装一次；以后直接从官方启动器开始游戏即可，不用每次先打开 EFML。")),
+                Ui.Hint("也可以直接用「直接启动游戏」：EFML 会借用本机官方启动器的身份拉起游戏，界面不会出现，但需要一次管理员授权。")),
             CloseButtonText = "知道了",
             DefaultButton = ContentDialogButton.Close
         };
@@ -139,18 +171,20 @@ internal sealed class HomePage : UserControl
         try
         {
             var settings = _window.Settings;
-            _mode.Text = "EFML 不直接启动游戏：用鹰角官方启动器开始游戏，模组会自动加载。";
+            _mode.Text = "直接启动会借用本机官方启动器的身份（不显示其界面，需要一次管理员授权）；" +
+                "也可以点「用官方启动器启动」，在启动器里开始游戏。两条路径都通过代理加载模组。";
             _gamePath.Text = GameDiscovery.IsGameExecutable(settings.GamePath) ? settings.GamePath : "未找到游戏，请到「设置」中选择 Endfield.exe";
 
             bool running = LaunchService.GameRunning();
             JsonObject? status = running ? await ModuleService.HostStatusAsync() : null;
-            _game.Set(running ? "运行中" : "未运行", running ? "" : "请从官方启动器启动", running ? "EfmlOkBrush" : "TextFillColorTertiaryBrush");
+            _game.Set(running ? "运行中" : "未运行", running ? "" : "点「直接启动游戏」，或从官方启动器开始", running ? "EfmlOkBrush" : "TextFillColorTertiaryBrush");
             _launch.IsEnabled = !_launching;
+            _official.IsEnabled = !_launching;
 
             JsonObject? host = status?["host"] as JsonObject;
             if (host is null)
             {
-                _host.Set(running ? "未加载" : "—", running ? "宿主还在启动，或加载组件未安装（点「启动游戏」检查）" : "", running ? "EfmlWarnBrush" : "TextFillColorTertiaryBrush");
+                _host.Set(running ? "未加载" : "—", running ? "宿主还在启动，或加载组件未安装（点「直接启动游戏」检查）" : "", running ? "EfmlWarnBrush" : "TextFillColorTertiaryBrush");
                 _thread.Set("—", "", "TextFillColorTertiaryBrush");
             }
             else
@@ -196,7 +230,7 @@ internal sealed class HomePage : UserControl
         string text = Tail(file, 400);
         if (text == _logText) return;
         _logText = text;
-        _log.Text = text.Length > 0 ? text : "（还没有日志。从官方启动器开始游戏后，这里会实时显示宿主和模组的输出。）";
+        _log.Text = text.Length > 0 ? text : "（还没有日志。启动游戏后，这里会实时显示宿主和模组的输出。）";
         if (_follow.IsChecked == true)
         {
             _log.SelectionStart = _log.Text.Length;

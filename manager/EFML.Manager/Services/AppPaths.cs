@@ -5,15 +5,15 @@ namespace EFML.Manager.Services;
 
 // %LOCALAPPDATA%\EFML (or %EFML_HOME%), shared with the native runtime and efml.exe:
 //   loader.ini                       [Loader] host=..., load_host=true; [Game] path=...
-//   runtime\<version>\               EFML.Host.dll, EFML.Bootstrap.dll, EFML.Injector.exe, xinput1_4.dll, efml.exe
+//   runtime\<version>\               EFML.Host.dll, EFML.Bootstrap.dll, EFML.Launcher.exe, EFML.Injector.exe, xinput1_4.dll, efml.exe
 //   modules\index.json, modules\packages\<generation>\
 //   logs\EFML.log, logs\loader.log
 //   manager.json                     manager settings
 internal static class AppPaths
 {
-    public const string Version = "1.2.0";
+    public const string Version = "1.3.0";
     public static readonly string[] RuntimeFiles =
-        ["EFML.Host.dll", "EFML.Bootstrap.dll", "EFML.Injector.exe", "xinput1_4.dll", "efml.exe"];
+        ["EFML.Host.dll", "EFML.Bootstrap.dll", "EFML.Launcher.exe", "EFML.Injector.exe", "xinput1_4.dll", "efml.exe"];
 
     public static string DataRoot
     {

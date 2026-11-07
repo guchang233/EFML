@@ -64,7 +64,7 @@ jobs:
           Copy-Item build\native\sdk\example.echo.dll "$stage\sdk\examples\echo\native\windows-x64\"
           Copy-Item README.md, LICENSE, THIRD-PARTY-NOTICES.md $stage
           if (Test-Path docs) { Copy-Item -Recurse docs "$stage\docs" }
-          foreach ($f in @('EFML.exe', 'runtime\EFML.Host.dll', 'runtime\EFML.Injector.exe', 'runtime\xinput1_4.dll', 'runtime\efml.exe')) {
+          foreach ($f in @('EFML.exe', 'runtime\EFML.Host.dll', 'runtime\EFML.Launcher.exe', 'runtime\EFML.Injector.exe', 'runtime\xinput1_4.dll', 'runtime\efml.exe')) {
             if (-not (Test-Path "$stage\$f")) { throw "missing $f" }
           }
           Get-ChildItem -Recurse $stage | Select-Object FullName, Length | Format-Table -AutoSize | Out-String -Width 200

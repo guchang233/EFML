@@ -3,7 +3,8 @@
 ## Better-Endfield
 
 EFML's native runtime, loaders, module ABI and parts of the manager are derived from
-[Better-Endfield](https://github.com/Dr-hydra/Better-Endfield) (Better Endfield Next 4.0.0),
+[Better-Endfield](https://github.com/Dr-hydra/Better-Endfield) (Better Endfield Next 4.0.0, plus the
+4.1.4 official-launcher bridge in `native/loader/official_launcher.*` and `EFML.Launcher.exe`),
 licensed under the GNU Affero General Public License v3.0. Files derived from it say so in their
 header. EFML is distributed under the same license; see [LICENSE](LICENSE).
 
