@@ -13,6 +13,7 @@ internal static class LaunchService
     public sealed record LaunchResult(bool Started, string Message);
 
     public static bool GameRunning() => Process.GetProcessesByName("Endfield").Length > 0;
+    public static bool LauncherRunning() => Process.GetProcessesByName("EFML.Launcher").Length > 0;
 
     // Installs the runtime and the proxy if needed and returns the resulting proxy state.
     public static async Task<ProxyStatus> PrepareAsync(ManagerSettings settings)
@@ -66,6 +67,85 @@ internal static class LaunchService
         }
         return new LaunchResult(true,
             "已请求管理员权限，游戏正在启动。官方启动器界面不会出现；进入游戏后这里会显示宿主和模组状态。");
+    }
+
+    // Closes running Endfield.exe processes. Because Endfield.exe runs elevated while the manager
+    // runs asInvoker, direct CloseMainWindow/Kill can hit Access Denied; fall back to an elevated
+    // taskkill targeting the remaining PIDs.
+    public static async Task<LaunchResult> CloseGameAsync()
+    {
+        Process[] processes = Process.GetProcessesByName("Endfield");
+        if (processes.Length == 0)
+            return new LaunchResult(true, "游戏未在运行。");
+
+        var remainingPids = new List<int>();
+        bool needsElevation = false;
+        try
+        {
+            foreach (Process process in processes)
+            {
+                try
+                {
+                    if (process.HasExited) continue;
+                    try
+                    {
+                        if (process.CloseMainWindow() && process.WaitForExit(1500)) continue;
+                    }
+                    catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+                    {
+                    }
+                    if (!process.HasExited)
+                    {
+                        process.Kill();
+                        process.WaitForExit(2000);
+                    }
+                }
+                catch (Exception exception) when (exception is Win32Exception or UnauthorizedAccessException)
+                {
+                    needsElevation = true;
+                    remainingPids.Add(process.Id);
+                }
+                catch (InvalidOperationException)
+                {
+                    // Already exited.
+                }
+            }
+        }
+        finally
+        {
+            foreach (Process process in processes) process.Dispose();
+        }
+
+        if (needsElevation && remainingPids.Count > 0)
+        {
+            string pidArgs = string.Join(" ", remainingPids.Select(pid => $"/PID {pid}"));
+            var start = new ProcessStartInfo
+            {
+                FileName = "taskkill.exe",
+                Arguments = $"/F {pidArgs}",
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            try
+            {
+                using Process? killer = Process.Start(start);
+                if (killer is not null) await killer.WaitForExitAsync();
+            }
+            catch (Win32Exception exception) when (exception.NativeErrorCode == 1223)
+            {
+                return new LaunchResult(false, "已取消管理员授权（UAC），游戏未关闭。");
+            }
+        }
+
+        for (int attempt = 0; attempt < 20 && GameRunning(); ++attempt)
+        {
+            await Task.Delay(150);
+        }
+
+        return GameRunning()
+            ? new LaunchResult(false, "未能关闭游戏进程，请手动关闭。")
+            : new LaunchResult(true, "已关闭游戏。");
     }
 
     // Runs EFML.Launcher.exe --check unelevated (its manifest is asInvoker) and reports the first

@@ -19,6 +19,7 @@ internal sealed class HomePage : UserControl
     private readonly Ui.Tile _thread = new("游戏线程");
     private readonly Ui.Tile _modules = new("模组");
     private readonly Button _launch = new() { MinWidth = 180, Height = 44 };
+    private readonly TextBlock _launchLabel = new() { Text = "直接启动游戏", FontSize = 16, FontWeight = FontWeights.SemiBold };
     private readonly Button _official = new() { Height = 44 };
     private readonly TextBlock _mode = Ui.Hint("");
     private readonly TextBlock _gamePath = Ui.Hint("");
@@ -31,15 +32,19 @@ internal sealed class HomePage : UserControl
         FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12
     };
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(1500) };
-    private bool _refreshing, _launching;
+    private bool _refreshing, _launching, _gameRunning;
     private string _logText = "";
 
     public HomePage(MainWindow window)
     {
         _window = window;
         _launch.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-        _launch.Content = new TextBlock { Text = "直接启动游戏", FontSize = 16, FontWeight = FontWeights.SemiBold };
-        _launch.Click += async (_, _) => await LaunchAsync();
+        _launch.Content = _launchLabel;
+        _launch.Click += async (_, _) =>
+        {
+            if (_gameRunning || LaunchService.GameRunning()) await CloseGameAsync();
+            else await LaunchAsync();
+        };
         _official.Content = "用官方启动器启动";
         _official.Click += async (_, _) => await GuideAsync();
         ScrollViewer.SetHorizontalScrollBarVisibility(_log, ScrollBarVisibility.Auto);
@@ -116,6 +121,42 @@ internal sealed class HomePage : UserControl
         }
     }
 
+    // Closes the running game after explicit user confirmation.
+    private async Task CloseGameAsync()
+    {
+        if (_launching) return;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "关闭游戏",
+            Content = Ui.Text("确定要关闭正在运行的《明日方舟：终末地》吗？未保存的游戏状态可能会丢失。"),
+            PrimaryButtonText = "关闭游戏",
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+
+        _launching = true;
+        _launch.IsEnabled = false;
+        _official.IsEnabled = false;
+        Ui.Show(_message, "正在关闭游戏…", InfoBarSeverity.Informational);
+        try
+        {
+            LaunchService.LaunchResult result = await LaunchService.CloseGameAsync();
+            Ui.Show(_message, result.Message,
+                result.Started ? InfoBarSeverity.Success : InfoBarSeverity.Warning);
+        }
+        catch (Exception exception)
+        {
+            Ui.Show(_message, exception.Message, InfoBarSeverity.Error);
+        }
+        finally
+        {
+            _launching = false;
+            await RefreshAsync();
+        }
+    }
+
     // Guided launch: make sure the runtime and the proxy are in place, then let the user click Start
     // Game in the official launcher.
     private async Task GuideAsync()
@@ -176,10 +217,20 @@ internal sealed class HomePage : UserControl
             _gamePath.Text = GameDiscovery.IsGameExecutable(settings.GamePath) ? settings.GamePath : "未找到游戏，请到「设置」中选择 Endfield.exe";
 
             bool running = LaunchService.GameRunning();
+            bool starting = !running && LaunchService.LauncherRunning();
+            string label = running ? "关闭游戏" : starting ? "正在启动…" : "直接启动游戏";
+            if (_gameRunning != running || _launchLabel.Text != label)
+            {
+                _gameRunning = running;
+                _launchLabel.Text = label;
+                _launch.Style = running || starting ? null : (Style)Application.Current.Resources["AccentButtonStyle"];
+            }
             JsonObject? status = running ? await ModuleService.HostStatusAsync() : null;
-            _game.Set(running ? "运行中" : "未运行", running ? "" : "点「直接启动游戏」，或从官方启动器开始", running ? "EfmlOkBrush" : "TextFillColorTertiaryBrush");
-            _launch.IsEnabled = !_launching;
-            _official.IsEnabled = !_launching;
+            _game.Set(running ? "运行中" : starting ? "正在启动" : "未运行",
+                running ? "" : starting ? "等待游戏进程创建…" : "点「直接启动游戏」，或从官方启动器开始",
+                running ? "EfmlOkBrush" : starting ? "EfmlWarnBrush" : "TextFillColorTertiaryBrush");
+            _launch.IsEnabled = !_launching && !starting;
+            _official.IsEnabled = !_launching && !running && !starting;
 
             JsonObject? host = status?["host"] as JsonObject;
             if (host is null)
